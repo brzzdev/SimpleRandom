@@ -1,0 +1,181 @@
+// swift-tools-version: 6.3
+//
+// Copyright © 2026 brzzdev
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+
+import PackageDescription
+
+let package = Package(
+	name: "SimpleRandom",
+	// English only in v1 — but the catalogues ship from the first build, because
+	// retrofitting one over a finished app is the expensive order. This is also what makes
+	// SwiftPM treat each target's `Localizable.xcstrings` as a localisation resource, so no
+	// target needs an explicit `resources:` entry. See ADR-0022.
+	defaultLocalization: "en",
+	// iPhone only, iOS 26 minimum. The floor is what unlocks ComposableArchitecture 2's
+	// `StoreActor` and `TestStoreActor`, both `@available(iOS 26, *)`.
+	platforms: [.iOS(.v26)],
+	products: [
+		// One product over the whole graph: the Tuist app target is the composition root
+		// and reaches `App`, which reaches everything else.
+		.library(name: "App", targets: ["App"]),
+	],
+	dependencies: [
+		// No tags, no releases — a moving branch is the only thing to pin to (ADR-0001).
+		//
+		// `traits: ["Dependencies"]` is load-bearing, not cosmetic: without it the store
+		// never re-establishes `DependencyValues` around feature work, so overrides set at
+		// store creation silently do not apply — and SQLiteData is built on
+		// swift-dependencies throughout.
+		.package(url: "https://github.com/pointfreeco/TCA26", branch: "main", traits: ["Dependencies"]),
+		// SQLiteData's `CasePaths` trait is deliberately left off. It forwards to
+		// StructuredQueries' `CasePathsMacrosSupport`, which does not exist on the
+		// `swift-case-paths` `26` branch that TCA26 pins the whole graph to. Leaving it off
+		// costs only enum-table support, which this schema does not use.
+		.package(url: "https://github.com/pointfreeco/sqlite-data", from: "1.7.0"),
+		.package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.12.0"),
+	],
+	targets: [
+		.target(
+			name: "Acknowledgements",
+			dependencies: [
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+			],
+		),
+		.target(
+			name: "App",
+			dependencies: [
+				"AppFeature",
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+				"Database",
+				.product(name: "Dependencies", package: "swift-dependencies"),
+				"Preferences",
+			],
+		),
+		.target(
+			name: "AppFeature",
+			dependencies: [
+				"CombineFeature",
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+				"ListsFeature",
+				"SettingsFeature",
+			],
+		),
+		.target(
+			name: "CombineFeature",
+			dependencies: [
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+				"Components",
+				"Database",
+				"ListDetailFeature",
+				"Models",
+				"Preferences",
+				"RandomiseFeature",
+			],
+		),
+		.target(
+			name: "Components",
+			dependencies: [
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+				"Models",
+			],
+		),
+		.target(
+			name: "Database",
+			dependencies: [
+				"Models",
+				.product(name: "SQLiteData", package: "sqlite-data"),
+			],
+		),
+		.target(
+			name: "ListDetailFeature",
+			dependencies: [
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+				"Components",
+				"Database",
+				"Models",
+				"RandomiseFeature",
+			],
+		),
+		.target(
+			name: "ListsFeature",
+			dependencies: [
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+				"Components",
+				"Database",
+				"ListDetailFeature",
+				"Models",
+				"Preferences",
+				"RandomiseFeature",
+			],
+		),
+		.target(
+			name: "Models",
+			dependencies: [
+				.product(name: "SQLiteData", package: "sqlite-data"),
+			],
+		),
+		.target(
+			name: "Preferences",
+			dependencies: ["Models"],
+		),
+		.target(
+			name: "RandomiseFeature",
+			dependencies: [
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+				"Database",
+				"Models",
+			],
+		),
+		// `BrzzUtils` is deliberately absent until `View Logs` lands (ADR-0015): it is the
+		// one target gated on that package's `tca26` branch existing, and everything else
+		// in the plan proceeds without it.
+		.target(
+			name: "SettingsFeature",
+			dependencies: [
+				"Acknowledgements",
+				.product(name: "ComposableArchitecture2", package: "TCA26"),
+				"Database",
+				"Models",
+				"Preferences",
+			],
+		),
+		// Four test targets, chosen by risk rather than by symmetry (ADR-0019). The other
+		// eight targets carry none.
+		.testTarget(
+			name: "CombineFeatureTests",
+			dependencies: ["CombineFeature"],
+		),
+		.testTarget(
+			name: "DatabaseTests",
+			dependencies: ["Database"],
+		),
+		.testTarget(
+			name: "ListsFeatureTests",
+			dependencies: ["ListsFeature"],
+		),
+		.testTarget(
+			name: "RandomiseFeatureTests",
+			dependencies: ["RandomiseFeature"],
+		),
+	],
+)
+
+// The strict regime, first of its two sites. The second is the Tuist app-target settings
+// in `Project.swift` — the app shell is not exempt.
+for target in package.targets {
+	var settings = target.swiftSettings ?? []
+	settings.append(contentsOf: [
+		.enableUpcomingFeature("ExistentialAny"),
+		.enableUpcomingFeature("ImmutableWeakCaptures"),
+		.enableUpcomingFeature("InferIsolatedConformances"),
+		.enableUpcomingFeature("InternalImportsByDefault"),
+		.enableUpcomingFeature("MemberImportVisibility"),
+		.enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+	])
+	#if compiler(>=6.4)
+	settings.append(.treatAllWarnings(as: .error))
+	#endif
+	target.swiftSettings = settings
+}

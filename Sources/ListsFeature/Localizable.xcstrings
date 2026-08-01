@@ -1,0 +1,17 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Lists" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lists"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}
