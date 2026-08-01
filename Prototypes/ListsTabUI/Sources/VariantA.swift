@@ -11,6 +11,7 @@ struct VariantAListsTab: View {
 	@State private var editing: RandomList?
 	@State private var isCreating = false
 	@State private var path: [RandomList.ID] = []
+	@State private var confirmingDelete: RandomList?
 
 	var body: some View {
 		NavigationStack(path: $path) {
@@ -34,12 +35,30 @@ struct VariantAListsTab: View {
 							}
 							.swipeActions {
 								Button("Delete", systemImage: "trash", role: .destructive) {
-									store.lists.removeAll { $0.id == list.id }
+									// Empty Lists go straight away; a List with Items asks first,
+									// because the delete is hard, global and unrecoverable.
+									if list.items.isEmpty {
+										store.lists.removeAll { $0.id == list.id }
+									} else {
+										confirmingDelete = list
+									}
 								}
 							}
 						}
 					}
 					.refreshable {}
+					.confirmationDialog(
+						"Delete “\(confirmingDelete?.name ?? "")”?",
+						isPresented: Binding(get: { confirmingDelete != nil }, set: { if !$0 { confirmingDelete = nil } }),
+						titleVisibility: .visible,
+						presenting: confirmingDelete
+					) { list in
+						Button("Delete \(list.items.count) Items", role: .destructive) {
+							store.lists.removeAll { $0.id == list.id }
+						}
+					} message: { _ in
+						Text("This can't be undone, and it happens on your other devices too.")
+					}
 				}
 			}
 			.navigationTitle("Lists")
@@ -161,7 +180,12 @@ struct VariantAListEditor: View {
 			Form {
 				Section {
 					TextField("Name", text: $list.name)
-					TextField("Emoji", text: Binding(get: { list.emoji ?? "" }, set: { list.emoji = $0.isEmpty ? nil : $0 }))
+					// Real thing needs a small UIViewRepresentable to force the emoji keyboard —
+					// SwiftUI has no API for it. Here: keep the last grapheme, whatever it is.
+					TextField("Emoji", text: Binding(
+						get: { list.emoji ?? "" },
+						set: { list.emoji = $0.last.map(String.init) }
+					))
 				}
 				Section {
 					Picker("Draw mode", selection: $list.drawMode) {
