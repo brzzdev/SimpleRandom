@@ -246,6 +246,86 @@ Its state also carries `drawToken`, an `Int` incremented on every draw and rende
 
 The `Dependencies` trait on TCA26 is what makes this work: without it the store never re-establishes `DependencyValues` around feature work, and overrides set at store creation silently do not apply.
 
+## Screens
+
+Rationale for what follows is in `docs/adr/`; the prototype branches — `prototype/lists-tab-ui`, `prototype/randomise-result-sheet`, `prototype/combine-tab-ui` — remain the primary visual source, with the chosen variant folded in and the rejected ones left in place.
+
+Nothing here is bespoke. System controls in their expected places, system materials and semantic colours, so the Light/Dark/System picker needs no per-screen handling.
+
+### Lists tab
+
+Large navigation title `Lists`, `+` the only toolbar item, pull to refresh. No reorder gesture and no search.
+
+**Rows** — emoji (or a dimmed 🎲 placeholder) · name · caption. The caption is `N items` for a plain List and `Deck · N of M left` for a Deck, so the index is where you see a Deck running down without opening it.
+
+**Create and edit** — `+` opens an editor sheet at a medium detent: name, emoji, draw mode. The same sheet renames, reached by a leading swipe.
+
+**Delete** — trailing swipe. An empty List goes immediately; a List with Items raises a confirmation naming it, with `Delete N Items` as the destructive action and "This can't be undone, and it happens on your other devices too." as the message.
+
+**Emoji** — a one-grapheme field opening the system emoji keyboard, keeping only the last grapheme typed. A `UIViewRepresentable`; SwiftUI has no API to force that keyboard. A curated grid was rejected as a fixed vocabulary to maintain.
+
+**Empty state** — `ContentUnavailableView`: "No Lists", "Make a list of things to pick between — lunch spots, films, chores.", plus a `New List` button. **No seed content and no starter templates ship** — a seeded List is real synced data the user has to delete, on every device.
+
+### List detail
+
+Inline navigation title = the List's name. Toolbar `+` adds an Item.
+
+**Items** — one row each, title only. Dealt Items render secondary with a trailing checkmark, so a running Deck reads at a glance. Tap opens a single-field editor sheet at a short detent; trailing swipe deletes with no confirmation.
+
+**Randomise** — a full-width prominent capsule in `.safeAreaInset(edge: .bottom)` over `.bar`, with the List's caption beneath it. Pinned chrome, not a floating button: it never covers the last row, never dodges the keyboard, and never needs content padded around it. Disabled when the List is empty, caption reading "Add an item to randomise". When a Deck is exhausted the same button reads **Reshuffle**.
+
+**Empty state** — `ContentUnavailableView`: "No Items" / "Add the things you want to pick between."
+
+### The Randomise result sheet
+
+A fixed `.medium` detent — `.large` at accessibility sizes, see **Dynamic Type** — with the drawn Item alone in the middle: `.largeTitle` bold, centred, wrapping to at most four lines with `minimumScaleFactor(0.5)` beneath it so a long title shrinks rather than truncates. A full-width **Again** at the bottom. Nothing else, and no chrome above the result.
+
+Nothing surrounds the result on the Lists path — not the List name, not the pool size, not a counter. On the Combine path a `subheadline`-sized secondary line above it carries the source List's emoji and name.
+
+**Again is the only button and drag is the only way out.** No Done, no Close, no toolbar. Again is disabled on a one-item pool.
+
+**Exhausted Deck** — in place of the result: `rectangle.stack.badge.minus`, "That's the whole deck", and "Every item in *Name* has been dealt once." **Reshuffle** replaces Again in the same position. Reachable only by re-rolling into it from inside the sheet, since the detail screen's pinned button already reshuffles once a Deck is spent.
+
+### Combine tab
+
+Mirrors the Lists tab: large title `Combine`, `+`, pull to refresh, no reorder, no search, the same row shape.
+
+**Rows** — emoji · name · caption, where the caption is counts: `3 Lists · 12 items`, or `3 Lists · Deck · 10 of 13 left`.
+
+**Create and edit** — `+` opens **one form**: name, emoji, draw mode, and a `Lists` section listing every List with a checkmark, under a live "12 items in the pool." footer ("Pick the Lists to draw from." when nothing is ticked). Empty Lists are shown and selectable, captioned `No items`. The draw-mode footer says the Combo's Deck is separate from each List's own. `+` is disabled when no Lists exist.
+
+**Delete** — trailing swipe. An empty Combo goes immediately; a Combo with members confirms, with "The Lists in it are kept. This happens on your other devices too."
+
+**Empty states** — "No Combos" / "Combine a few Lists and pick from all of them at once.", and the distinct "No Lists to Combine" / "Make a couple of Lists first, then combine them here."
+
+### Combo detail
+
+Inline navigation title = the Combo's name. `Edit` is the only toolbar item and reopens the one form.
+
+**Member rows** — emoji · name · `N items`. Counts only; never that List's own deck state. Tapping a member row pushes the real List detail. No swipe-to-remove — the section footer says membership is edited in the form.
+
+**Randomise** — the same pinned capsule, with three distinct disabled captions rather than one: `Add a List to randomise` (no members), `The Lists in this Combo have no items` (members, empty pool), and for an exhausted Deck the button becomes **Reshuffle** rather than being disabled.
+
+### Settings
+
+Six rows in four sections, destructive last, with **no `#if DEBUG` section anywhere** — release and debug builds show the same tab.
+
+| Section | Row |
+| --- | --- |
+| `Appearance` | `Theme` — a Light / Dark / System picker, defaulting to System |
+| `iCloud` | `Sync` — account availability, plus a transient "Syncing…" while synchronising |
+| `Diagnostics` | `View Logs` — pushes an `OSLogStore`-backed viewer with a text export |
+| `About` | `Version 1.0.0 (1)` — tap to copy · `A brzzdev production` in secondary text · `Acknowledgements` — pushes |
+| — | `Delete All Lists` — destructive, alone in an unheadered trailing section |
+
+`A brzzdev production` is the entire credits half of "licences and credits": the Acknowledgements screen credits the code, and a solo-authored app has nobody else to name. The app's own licence is not surfaced in v1.
+
+**Acknowledgements** is two levels — a list of name, version and licence type per package, each row pushing the full text on its own scrolling screen. Data is generated from the full transitive `Package.resolved` graph into a committed `Licenses.generated.swift`; the runtime never runs the generator, and `version` stays optional because TCA26 is pinned to a branch.
+
+**Delete All Lists** is disabled when there are no Lists. It raises a `confirmationDialog` stating the real counts and the real blast radius — "Delete all 7 lists and 42 items?" / "This removes them from this iPhone and from iCloud on all your devices. It cannot be undone." The specificity is the safety mechanism; a typed `DELETE` confirmation was rejected as a keyboard on a screen that otherwise needs none. There is no local-only variant — deletes are hard and sync-propagating, and stopping the engine to wipe locally only means CloudKit re-seeds the device on restart. It earns its place because uninstalling leaves the CloudKit private database intact.
+
+**Deliberately absent from v1**, so a later addition argues against a decision rather than slipping in: an iCloud sync toggle, a haptics toggle, randomise preferences, rate/feedback/support links, export/import/share, a default-list or startup-tab preference, an app accent colour, and the v2 animation toggle.
+
 ## Accessibility
 
 **VoiceOver and Dynamic Type are v1 requirements, screen by screen.** The app is stock SwiftUI, so most of it works untouched; what follows is the part that does not.
