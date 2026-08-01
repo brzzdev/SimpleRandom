@@ -1,0 +1,36 @@
+deployment_target:
+  iOS_deployment_target: 26.0
+
+excluded:
+  - "*.generated.swift"
+  - "**/.build"
+  - Derived
+
+custom_rules:
+  # Every user-facing literal must carry `bundle: #bundle`. SwiftUI resolves a string
+  # against `Bundle.main` unless told otherwise, and every string in this app lives in a
+  # package target — so without the argument the lookup leaves the target's own bundle and
+  # finds nothing. In an English-only build the miss is invisible: SwiftUI falls through to
+  # the key and the right words render anyway. Xcode's extraction is no help either, since
+  # it scans source literals rather than runtime lookups, so a full catalogue is not
+  # evidence of correct wiring.
+  #
+  # The enumerated call sites are the decision, and they live in `CONTEXT.md` under
+  # "Enforcing the bundle argument" — this is the tooling that carries it. Reaching past
+  # `Text` is the point: `Text` is a minority of this app's strings, and the VoiceOver
+  # announcements are not `Text` at all.
+  #
+  # Where an API has no `bundle:` parameter of its own — `Button`, `Label`,
+  # `navigationTitle`, `Picker`, `Section`, `Toggle` — the fix is to hand it a `Text` that
+  # does, rather than a bare literal. That form does not match this rule.
+  #
+  # The residual risk is named in `CONTEXT.md` and accepted: a source-level rule cannot see
+  # a runtime lookup, so a string that escapes these call sites escapes the check.
+  localised_string_needs_bundle:
+    name: "Localised string needs a bundle"
+    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*"(?:[^"\\]|\\.)*"(?![^()]*bundle:)'
+    excluded_match_kinds:
+      - comment
+      - doccomment
+    message: "Pass `bundle: #bundle`, or hand this call a `Text(_:bundle:)` — every string in this app lives in a package target, and without it the lookup goes to `Bundle.main` and silently misses."
+    severity: error
