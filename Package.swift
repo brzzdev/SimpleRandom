@@ -147,9 +147,16 @@ let package = Package(
 			name: "CombineFeatureTests",
 			dependencies: ["CombineFeature"],
 		),
+		// `DependenciesTestSupport` carries the suite trait that hands each test case its own
+		// in-memory database; `SQLiteData` is what the tests query it with.
 		.testTarget(
 			name: "DatabaseTests",
-			dependencies: ["Database"],
+			dependencies: [
+				"Database",
+				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
+				"Models",
+				.product(name: "SQLiteData", package: "sqlite-data"),
+			],
 		),
 		.testTarget(
 			name: "ListsFeatureTests",
