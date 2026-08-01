@@ -24,15 +24,25 @@ custom_rules:
   # `navigationTitle`, `Picker`, `Section`, `Toggle` — the fix is to hand it a `Text` that
   # does, rather than a bare literal. That form does not match this rule.
   #
-  # The required expression is matched exactly, not merely the presence of a `bundle:`
-  # label: `bundle: .main` and `bundle: nil` are precisely the wiring this exists to catch,
-  # and both would satisfy a laxer check while still resolving against the wrong bundle.
+  # Three things the pattern is deliberate about:
+  #
+  # - The required expression is matched exactly, not merely the presence of a `bundle:`
+  #   label. `bundle: .main` and `bundle: nil` are precisely the wiring this exists to
+  #   catch, and both satisfy a laxer check while resolving against the wrong bundle.
+  # - `#*` around the literal catches raw strings, so `Text(#"…"#)` is not a way past.
+  # - The lookahead steps over one level of balanced parentheses, so an argument like
+  #   `tableName: table()` between the literal and `bundle:` does not make a correct call
+  #   look like a violation. A stricter `[^()]*` did exactly that, and a false positive at
+  #   `error` severity is worse than the miss it prevents.
   #
   # The residual risk is named in `CONTEXT.md` and accepted: a source-level rule cannot see
-  # a runtime lookup, so a string that escapes these call sites escapes the check.
+  # a runtime lookup, so a string that escapes these call sites escapes the check. Nor can
+  # it defeat deliberate circumvention — `Text("…" /* bundle: #bundle */)` reads as
+  # satisfied — but that is what `swiftlint:disable` is for, and neither is an accident
+  # anyone makes.
   localised_string_needs_bundle:
     name: "Localised string needs a bundle"
-    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*"(?:[^"\\]|\\.)*"(?![^()]*bundle:\s*#bundle\b)'
+    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*#*"(?:[^"\\]|\\.)*"#*(?!(?:[^()]|\([^()]*\))*bundle:\s*#bundle\b)'
     excluded_match_kinds:
       - comment
       - doccomment
