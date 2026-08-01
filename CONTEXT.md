@@ -183,6 +183,50 @@ Sharing Lists with other iCloud users (`CKShare`) is **out of scope** — sync m
 - `Combo`, `ComboList` and `ComboDraw` could never be shared — records with multiple foreign keys are excluded by the sync layer, without workaround. This is accepted: a Combo is a personal arrangement of your own Lists, not a thing to hand to someone else.
 - **`ListDraw` is declared a private table from day one.** Private tables still sync across one person's devices, so this changes nothing in v1 — but it means a shared List would not carry one participant's draws into another's deck. Deck state is written on every tap, so relocating it after ship would be a live data migration under a shared schema rather than the dead column a never-written reserved column leaves behind.
 
+## Architecture
+
+A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.SimpleRandom`, `destinations: [.iPhone]`, `IPHONEOS_DEPLOYMENT_TARGET` 26.0, `SWIFT_VERSION` 6.0) whose sources are `AppHost/**` and whose only dependency is the local package's `App` product.
+
+### Targets
+
+`Package.swift` is `swift-tools-version:6.3`, `platforms: [.iOS(.v26)]`, one library product — `App`.
+
+| Target | Depends on | Holds |
+| --- | --- | --- |
+| `Models` | SQLiteData | The `@Table` types — `List`, `Item`, `ListDraw`, `Combo`, `ComboList`, `ComboDraw` — plus `DrawMode`, `DrawScope` and `Theme` |
+| `Database` | `Models`, SQLiteData | `migrator`, `appDatabase()`, `inMemory()`, the `SyncEngine` factory and its `SyncEngineDelegate` |
+| `Preferences` | `Models` | The two `@Shared(.appStorage)` keys: `theme` and `hasCompletedFirstFetch` |
+| `Acknowledgements` | ComposableArchitecture2 | `Licenses.generated.swift`, the licence list and the licence detail screen |
+| `RandomiseFeature` | `Database`, `Models`, ComposableArchitecture2 | The randomise sheet and the whole draw |
+| `ListsFeature` | `Database`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Lists index and `ListDetail` |
+| `CombineFeature` | `Database`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Combine index and `ComboDetail` |
+| `SettingsFeature` | `Acknowledgements`, `BrzzUtils`, `Database`, `Models`, `Preferences`, ComposableArchitecture2 | The Settings form and `Logs/` |
+| `AppFeature` | `CombineFeature`, `ListsFeature`, `SettingsFeature`, ComposableArchitecture2 | The root `@Feature` and the `TabView` |
+| `App` | `AppFeature`, `Database`, `Preferences`, ComposableArchitecture2 | `SimpleRandomApp`, `prepareDependencies` at launch, store creation, `preferredColorScheme` |
+
+One test target per feature target, plus `ModelsTests`. `CombineFeature` does not depend on `ListsFeature`: its List picker reads `Models.List` through its own `@FetchAll`.
+
+Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data` and `swift-dependencies`. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
+
+### Composition
+
+Features are `@Feature` types with `@ValueObservable` state; the 1.x vocabulary (`Reducer`, `Effect`, `@Presents`, `ViewStore`, `StackState`) does not exist in this library.
+
+`AppFeature.State` holds `var currentTab: Tab = .lists` as plain state — the app always opens on Lists — alongside the three tab features, scoped in `Features { }` under `TabView(selection: $store.currentTab)`.
+
+Each tab is index plus detail, one level deep. `ListsFeature.State` holds `@FetchAll var lists` and `var detail: ListDetail.State?`, wired with `.ifLet` and pushed with `.navigationDestination(item:)`; `ListDetail.State` holds `@FetchAll var items` and `var randomise: RandomiseFeature.State?`, presented with `.sheet(item:)`. Combine mirrors it exactly. The push and the sheet are therefore the same idiom — optional child state — rather than a `[Path.State]` stack, which buys nothing at depth one.
+
+`RandomiseFeature` owns the draw, not just its presentation. Its state carries a `DrawScope` — `.list(List.ID)` or `.combo(Combo.ID)` — and the feature builds the pool, picks, writes the `ListDraw` or `ComboDraw` row, detects exhaustion and reshuffles. Re-roll and Reshuffle are both buttons on the sheet, so the logic lives where the gestures land, and one test suite covers both tabs' deck arithmetic. Only the detail screens present it: you open a List, then randomise it.
+
+### Seams
+
+- **Reads** are `@FetchAll` / `@FetchOne` declared in `Feature.State`, which the `@ValueObservable` macro allowlists by design. There is no repository client: a client returns snapshots rather than live updates, and `SQLiteDataTestSupport` gives each test a real in-memory database, so a hand-written mock would only add drift.
+- **Writes** are `@Dependency(\.defaultDatabase)` inside `store.addTask`, wrapped in `withErrorReporting`.
+- **Randomness** is `@Dependency(\.withRandomNumberGenerator)`.
+- **Everything else the app owns** is `@FeatureEnvironment`, the library's native mechanism. `@Dependency` is reserved for what crosses into SQLiteData, which is what swift-dependencies is for.
+
+The `Dependencies` trait on TCA26 is what makes this work: without it the store never re-establishes `DependencyValues` around feature work, and overrides set at store creation silently do not apply.
+
 ## Constraints
 
 - iPhone only, iOS 26 minimum. No iPad, Mac, or watch layouts. The iOS 26 floor is what makes ComposableArchitecture 2's `StoreActor` and `TestStoreActor` available.
