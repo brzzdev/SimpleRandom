@@ -36,12 +36,16 @@ Compiles straight to an iPhone 17 Pro (iOS 26) simulator with `swiftc` — no Xc
 
 ## The three variants
 
+**A won**, and its chosen answers are folded back into `VariantA.swift`: no Done button, Again
+disabled on a one-item pool, and nothing at all around the result on the Lists path. B and C are
+left in place as the record of what was rejected and why.
+
 | | A — Centre stage | B — Peek bar | C — The pool |
 | --- | --- | --- | --- |
 | Detent | `.medium` | `.height(200)`, background interaction on | `.fraction(0.9)` |
 | Result | centred, `.largeTitle`, up to 4 lines | leading, `.title`, up to 3 lines | centred, `.largeTitle`, over the pool |
 | Re-roll | full-width **Again** | circular dice, trailing | full-width **Again**, pinned |
-| Dismiss | **Done** under the button | drag only | **Done** in the toolbar |
+| Dismiss | drag only | drag only | **Done** in the toolbar |
 | Provenance (Combine) | line above the result | in the caption line | line above the result, and on every row |
 | Proof a draw happened | haptic only (medium impact) | haptic (selection) + **Draw N** counter | haptic (success) + the pool row highlight moves |
 | Exhausted Deck | full stop: icon, headline, **Reshuffle** | caption + "All N dealt" + shuffle button | headline over the all-dealt pool |

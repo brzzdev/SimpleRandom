@@ -1,17 +1,22 @@
-// PROTOTYPE — Variant A: "Centre stage"
+// PROTOTYPE — Variant A: "Centre stage" — CHOSEN, with the answers folded in.
 //
-// The obvious answer. A medium detent, the result alone in the middle at display size, Again
-// underneath it. Nothing else is on screen, so the still frame is all result.
+// A medium detent, the result alone in the middle at display size, Again underneath it. Nothing
+// else is on screen, so the still frame is all result.
 //
 // Its answer to the dead-button problem is haptics alone: a medium impact on every draw, and
-// nothing visual changes when a re-roll repeats itself. If that is enough, A is the cheapest
-// thing that works. If it is not, A is the variant that proves it.
+// nothing visual changes when a re-roll repeats itself. Chosen knowingly, including the case where
+// system haptics are off and a repeat is indistinguishable from a dead button — the same reasoning
+// #6 used to refuse repeat-suppression applies: if repeats bother you, the List has a Deck mode.
+//
+// Folded in after the review:
+//   - no Done button; drag is the only way out
+//   - Again is disabled on a one-item pool, where every draw is a repeat by definition
+//   - nothing around the result on the Lists path — not the List name, not the pool size
 
 import SwiftUI
 
 struct VariantAResultSheet: View {
 	@Bindable var session: Session
-	@Environment(\.dismiss) private var dismiss
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -65,21 +70,17 @@ struct VariantAResultSheet: View {
 	}
 
 	private var buttons: some View {
-		VStack(spacing: 4) {
-			Button {
-				session.isExhausted ? session.reshuffle() : session.draw()
-			} label: {
-				Label(
-					session.isExhausted ? "Reshuffle" : "Again",
-					systemImage: session.isExhausted ? "shuffle" : "dice"
-				)
-				.frame(maxWidth: .infinity)
-			}
-			.buttonStyle(.borderedProminent)
-			.controlSize(.large)
-
-			Button("Done") { dismiss() }
-				.controlSize(.large)
+		Button {
+			session.isExhausted ? session.reshuffle() : session.draw()
+		} label: {
+			Label(
+				session.isExhausted ? "Reshuffle" : "Again",
+				systemImage: session.isExhausted ? "shuffle" : "dice"
+			)
+			.frame(maxWidth: .infinity)
 		}
+		.buttonStyle(.borderedProminent)
+		.controlSize(.large)
+		.disabled(session.total == 1)
 	}
 }
