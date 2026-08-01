@@ -7,7 +7,9 @@ public import SwiftUI
 
 internal import AppFeature
 internal import ComposableArchitecture2
+internal import Database
 internal import Dependencies
+internal import SQLiteData
 
 /// The composition root. `AppHost` makes this the process entry point; everything the app
 /// is made of hangs off the one store created here.
@@ -19,10 +21,11 @@ public struct SimpleRandomApp: App {
 		// property default so the ordering is on the page. A dependency prepared after
 		// something has read it is one already read at its default, and `@StateObject`'s
 		// autoclosure makes the point easy to lose.
-		prepareDependencies { _ in
-			// The live database goes here, before any feature can reach for
-			// `@Dependency(\.defaultDatabase)`. `Database` ships `appDatabase()` with the
-			// schema, so this stays empty until then.
+		//
+		// `try!` because there is nothing to fall back to: a database that will not open is
+		// an app with no data and no way to make any. The sync engine joins it in #29.
+		try! prepareDependencies {
+			$0.defaultDatabase = try appDatabase()
 		}
 		_store = StateObject(wrappedValue: Store(initialState: AppFeature.State()) { AppFeature() })
 	}
