@@ -24,11 +24,15 @@ custom_rules:
   # `navigationTitle`, `Picker`, `Section`, `Toggle` — the fix is to hand it a `Text` that
   # does, rather than a bare literal. That form does not match this rule.
   #
+  # The required expression is matched exactly, not merely the presence of a `bundle:`
+  # label: `bundle: .main` and `bundle: nil` are precisely the wiring this exists to catch,
+  # and both would satisfy a laxer check while still resolving against the wrong bundle.
+  #
   # The residual risk is named in `CONTEXT.md` and accepted: a source-level rule cannot see
   # a runtime lookup, so a string that escapes these call sites escapes the check.
   localised_string_needs_bundle:
     name: "Localised string needs a bundle"
-    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*"(?:[^"\\]|\\.)*"(?![^()]*bundle:)'
+    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*"(?:[^"\\]|\\.)*"(?![^()]*bundle:\s*#bundle\b)'
     excluded_match_kinds:
       - comment
       - doccomment
