@@ -14,6 +14,8 @@ Three tabs:
 
 A **List** has **Items**. These are the words used in conversation, in this document, in the UI, and in Swift.
 
+A List is either plain or a **Deck**. A Deck deals each Item at most once; when the last one has gone it is **exhausted**, and **Reshuffle** puts them all back. These four words travel together — reshuffle and exhausted both presuppose a deck.
+
 `List` collides with SwiftUI's `List`. The domain word wins: the model type is `List`, and feature views that import SwiftUI qualify it as `Models.List`. The alternative — a second vocabulary for the code — was rejected as a permanent translation cost paid to avoid an occasional qualification.
 
 ### List
@@ -22,12 +24,13 @@ A named collection of Items, and the unit a randomise runs over.
 
 | Field       | Type      | Notes                                    |
 | ----------- | --------- | ---------------------------------------- |
-| `id`        | `UUID`    | Primary key                              |
-| `createdAt` | `Date`    | Sort key                                 |
-| `emoji`     | `String?` | Optional, one grapheme cluster           |
-| `name`      | `String`  | Trimmed, non-empty                       |
-| `position`  | `Int?`    | **Reserved, unread in v1** — see below   |
-| `updatedAt` | `Date?`   | **Reserved, unread in v1** — see below   |
+| `id`        | `UUID`      | Primary key                              |
+| `createdAt` | `Date`      | Sort key                                 |
+| `drawMode`  | `DrawMode`  | `.independent` (default) or `.deck`      |
+| `emoji`     | `String?`   | Optional, one grapheme cluster           |
+| `name`      | `String`    | Trimmed, non-empty                       |
+| `position`  | `Int?`      | **Reserved, unread in v1** — see below   |
+| `updatedAt` | `Date?`     | **Reserved, unread in v1** — see below   |
 
 ### Item
 
@@ -37,6 +40,7 @@ A single candidate within a List. Text and nothing else: the app's job is pickin
 | ----------- | -------- | -------------------------------------- |
 | `id`        | `UUID`   | Primary key                            |
 | `createdAt` | `Date`   | Sort key                               |
+| `drawnAt`   | `Date?`  | `nil` means undealt — see **Drawing**  |
 | `listID`    | `UUID`   | Foreign key to `List`, `ON DELETE CASCADE` |
 | `position`  | `Int?`   | **Reserved, unread in v1** — see below |
 | `title`     | `String` | Trimmed, non-empty                     |
@@ -55,7 +59,15 @@ A single candidate within a List. Text and nothing else: the app's job is pickin
 
 **Selection.** Uniform across the Items in scope. `weight` is present in the schema and read by nothing.
 
-**Bounds.** No maximum. An empty List is legal — you have just made it — and its Randomise button is visible but disabled, with a prompt to add something. A one-item List randomises normally and always returns that item.
+**Drawing.** A plain List (`drawMode == .independent`) draws uniformly over all its Items on every tap, with no memory: the same Item twice in a row is legal and is not suppressed. A **Deck** (`drawMode == .deck`) draws only over Items whose `drawnAt` is `nil`, stamping the drawn one; when none are left the Deck is **exhausted** and offers **Reshuffle**, which clears every `drawnAt` on the List. Reshuffle is available at any time, not only at exhaustion.
+
+`drawnAt` is a property of the row and nothing else touches it. A new Item arrives undealt, so adding one to an exhausted Deck un-exhausts it. Editing an Item's title does not clear its `drawnAt` — identity is the row, not the text. Switching a Deck back to plain preserves `drawnAt`, so switching back resumes where it left off. Nothing resets a Deck on launch or on a timer.
+
+Randomness comes from `@Dependency(\.withRandomNumberGenerator)`; the selection, exhaustion and reshuffle logic itself lives in the reducer rather than behind a client, so tests seed the generator and assert real draws.
+
+**Draw results are not persisted.** There is no last-result memory and no draw history table; `drawnAt` is the only record that a draw happened.
+
+**Bounds.** No maximum. An empty List is legal — you have just made it — and its Randomise button is visible but disabled, with a prompt to add something. A one-item List randomises normally and always returns that item — and as a Deck, exhausts after a single draw.
 
 ### Reserved columns
 
