@@ -1,0 +1,45 @@
+{
+  "configurations" : [
+    {
+      "id" : "6C0F1F4E-5A4B-4B31-9E4D-7F2A6C1B8D30",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testExecutionOrdering" : "random"
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:.",
+        "identifier" : "CombineFeatureTests",
+        "name" : "CombineFeatureTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:.",
+        "identifier" : "DatabaseTests",
+        "name" : "DatabaseTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:.",
+        "identifier" : "ListsFeatureTests",
+        "name" : "ListsFeatureTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:.",
+        "identifier" : "RandomiseFeatureTests",
+        "name" : "RandomiseFeatureTests"
+      }
+    }
+  ],
+  "version" : 1
+}
