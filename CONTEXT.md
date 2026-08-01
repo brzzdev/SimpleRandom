@@ -139,6 +139,8 @@ A draw row is keyed on the Item's identity and nothing else touches it. A new It
 
 Randomness comes from `@Dependency(\.withRandomNumberGenerator)`; the selection, exhaustion and reshuffle logic itself lives in the reducer rather than behind a client, so tests seed the generator and assert real draws.
 
+**A draw row is written when the result is shown, not when it is computed.** In v1 those are the same instant, so this constrains nothing. It matters the moment anything sits between the two — a v2 reveal animation decides the winner at the tap, and if the row is written there, dragging the sheet away mid-animation spends a card the user never saw, with no history to say which one. A Deck may not deal behind the user's back.
+
 **Draw results are not persisted.** There is no last-result memory and no draw history table; `Item.drawnAt` and a `ComboDraw` row are the only records that a draw happened. A Combo's result names the Item's source List alongside the title — load-bearing precisely because duplicate Items are not deduplicated, so "Pizza" from Lunch and "Pizza" from Dinner would otherwise be indistinguishable.
 
 **Bounds.** No maximum, and no minimum. An empty List is legal — you have just made it — and its Randomise button is visible but disabled, with a prompt to add something. A one-item List randomises normally and always returns that item — and as a Deck, exhausts after a single draw.
@@ -226,7 +228,9 @@ Combine is one level deeper: `CombineFeature.State` → `ComboDetail.State` → 
 
 **`ListDetail` behaves identically wherever it is pushed.** Presented from a Combo it keeps its pinned Randomise button, its own editor sheets and its own `ListDraw` deck; nothing about it is conditional on the presenting tab. Drawing there draws from that List alone and leaves the Combo's `ComboDraw` rows untouched, which is exactly what **Decks are independent per surface** already says. The alternative — a flag suppressing the button when presented from Combine — was rejected as conditional behaviour on a shared screen to prevent something the domain model has already declared legal.
 
-`RandomiseFeature` owns the draw, not just its presentation. Its state carries a `DrawScope` — `.list(List.ID)` or `.combo(Combo.ID)` — and the feature builds the pool, picks, writes the `ListDraw` or `ComboDraw` row, detects exhaustion and reshuffles.
+`RandomiseFeature` owns the draw, not just its presentation. Its state carries a `DrawScope` — `.list(List.ID)` or `.combo(Combo.ID)` — and the feature picks, writes the `ListDraw` or `ComboDraw` row, detects exhaustion and reshuffles.
+
+**The pool lives in `RandomiseFeature.State`**, as a `@FetchAll` whose query is built from the `DrawScope`, rather than being assembled inside the reducer at draw time and discarded. This is only **Seams**' read rule applied — but it is also what keeps the sheet's view holding every candidate, not just the winner, which is what any later animation over the pool would need. It is not free: in Deck mode the remaining pool shrinks on every draw, so `RandomiseFeatureTests`' exhaustive assertions carry that churn alongside the result.
 
 Its state also carries `drawToken`, an `Int` incremented on every draw and rendered by nothing. A re-roll that lands on the Item already shown changes no other state, so it is the only value the sheet's haptic and its VoiceOver announcement can trigger on — see **Accessibility**. It is not persisted; **Draw results are not persisted** is unchanged. Re-roll and Reshuffle are both buttons on the sheet, so the logic lives where the gestures land, and one test suite covers both tabs' deck arithmetic. Only the detail screens present it: you open a List, then randomise it.
 
@@ -253,6 +257,8 @@ Stated non-goals for v1: Switch Control, Voice Control and Full Keyboard Access 
 Nothing in SwiftUI announces changed `Text` inside a presented sheet, so **Again** is silent to VoiceOver — worse than the sighted case, which at least gets the haptic. Every re-roll therefore posts an `AccessibilityNotification.Announcement` at `.high` priority, from the view, on `drawToken` changing — the same trigger as the haptic, because they are two channels acknowledging one event. Routing it through the reducer was rejected: an announcement is a UI-layer acknowledgement, and `RandomiseFeatureTests` should not carry a seam that only ever tests its own mock.
 
 The token's initial value is what makes this fire **on re-roll only**: the sheet's presentation already reads the opening result, and announcing there talks over it.
+
+Both channels fire when the result **becomes visible**, which in v1 is when it is drawn. The token is named for the draw because that is the domain's word — Decks deal, `ListDraw` and `ComboDraw` record it — but the contract is the reveal. An acknowledgement that arrives before the thing it acknowledges is worse than none, so anything that later separates the two moments moves the increment, rather than leaving it where the name suggests.
 
 What it says, in the fewest words that stay unambiguous:
 
