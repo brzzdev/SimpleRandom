@@ -191,7 +191,7 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 
 ### Targets
 
-`Package.swift` is `swift-tools-version:6.3`, `platforms: [.iOS(.v26)]`, one library product — `App`.
+`Package.swift` is `swift-tools-version:6.3`, `defaultLocalization: "en"`, `platforms: [.iOS(.v26)]`, one library product — `App`.
 
 | Target | Depends on | Holds |
 | --- | --- | --- |
@@ -301,10 +301,65 @@ Spoken separators are commas, not `·`. Rows read:
 
 **The result sheet's detent grows at accessibility sizes** — `.medium` becomes `.large`. The fixed medium detent was checked only to `.accessibility3`; past that a long title either overflows or scales below half, and scaling down is a direct contradiction of the setting the user just turned up. `minimumScaleFactor(0.5)` goes back to being a safety net for one absurd Item rather than the thing holding the layout together. Everyone below the accessibility sizes sees the sheet exactly as designed.
 
+## Localisation
+
+**v1 ships English only — not yet translated, rather than never.** No second language is committed to and none is ruled out; what ships in v1 is the *mechanism*, because retrofitting a string catalogue over a finished app is the expensive order and adding one up front is nearly free.
+
+It is also not optional. **Accessibility** requires automatic grammar agreement for `N items` and `N Lists`, and that is a String Catalog feature — without a catalogue in the bundle the string is looked up from, "1 items" ships to everyone.
+
+### Where the catalogues live
+
+A `Localizable.xcstrings` in each of the eight targets that render text — `Acknowledgements`, `AppFeature`, `CombineFeature`, `Components`, `ListDetailFeature`, `ListsFeature`, `RandomiseFeature` and `SettingsFeature`. `Models`, `Database`, `Preferences` and `App` render none and carry none. `defaultLocalization: "en"` on the package is what makes SwiftPM treat these as localisation resources; no target needs an explicit `resources:` entry.
+
+**Every user-facing literal is written `bundle: #bundle`.** SwiftUI resolves a string against `Bundle.main` unless told otherwise, and every string in this app lives in a package target — so without the argument the lookup leaves the target's own bundle and finds nothing.
+
+This deliberately departs from the convention in the sibling apps, which put one catalogue in the app target. Here AppHost renders no UI, so a catalogue there would collect nothing and translate nothing. Catalogues live where the text is.
+
+### Composed strings
+
+**Every composed string is one catalogue entry, separators included.** Row captions, the pinned bar's captions and the VoiceOver announcements are format strings with positional interpolation, not fragments joined in Swift:
+
+| Kind | Entry |
+| --- | --- |
+| Lists index row, Deck | `%@ · Deck · %lld of %lld left` |
+| Lists index row, VoiceOver | `%@, Deck, %lld of %lld left` |
+| Combine index row, Deck | `%@ · ^[%lld Lists](inflect: true) · Deck · %lld of %lld left` |
+| Item count | `^[%lld items](inflect: true)` |
+| Combine announcement | `%@, from %@` |
+
+A join is the one construction that cannot be translated: the translator receives fragments and no control over word order, and the separator — `·` in visible captions, a comma in spoken labels — is a punctuation decision made in code by someone thinking in English. Roughly fourteen entries once the plain and Deck variants and the pinned bar's three disabled prompts are counted, which is a small price for the phrase being the unit.
+
+Two consequences follow. Each row carries **two authored strings**, the visible caption and the accessibility label, rather than deriving one from the other — which **Accessibility** already implies by spelling `·` as a comma. And grammar agreement nests inside a larger phrase, so a count keeps its inflection mid-format.
+
+### Not localisable
+
+**Licence bodies.** `Licenses.generated.swift` holds generated third-party text as `String` properties, rendered from a variable rather than a literal. Extraction therefore skips it automatically and `bundle:` does not belong on it. Recorded here so it is not later "fixed". The Acknowledgements screen's own chrome is localised like any other.
+
+**User content.** List names, Combo names and Item titles are whatever the user typed. They enter localised strings only as `%@`, and are never inflected — grammar agreement applies to counts, not to content.
+
+### Right-to-left
+
+**Out of scope for v1 because it is unreachable, not because it is unwanted.** Layout direction resolves from the app's own localisation rather than the device's language, so an app shipping `en` alone runs left-to-right everywhere. Nothing about RTL is verified, and this says so.
+
+The code stays direction-agnostic regardless, because that is SwiftUI's default rather than effort spent: the swipe action is `.leading`, not `.left`, and the pinned bar is full-width and centred. A first RTL translation would inherit a working layout instead of a rewrite.
+
+### Enforcing the bundle argument
+
+A missing `bundle: #bundle` is **invisible in v1**. The lookup misses, SwiftUI falls through to the key, and the English string renders correctly. Xcode's extraction gives no warning either — it scans a target's source literals, so the entry appears in the catalogue while the runtime lookup still goes to the wrong bundle. A full catalogue is not evidence of correct wiring.
+
+A SwiftLint rule therefore guards the call sites at write time. The enumerated list is the decision and lives here; the rule itself is tooling, configured by convention:
+
+`accessibilityLabel`, `AccessibilityNotification.Announcement`, `accessibilityValue`, `Button`, `confirmationDialog`, `Label`, `navigationTitle`, `Picker`, `Section`, `Text`, `Toggle`.
+
+Reaching past `Text` is the point: `Text` is a minority of this app's strings, and **Accessibility**'s announcements — whose breakage is the hardest of all to notice, since they are silent either way — are not `Text` at all.
+
+**The residual risk is accepted and named.** A source-level rule cannot see a runtime lookup, so a string that escapes the enumerated call sites escapes the check. The rejected alternative was a pseudolanguage pass per screen, where a correctly-wired string comes back accented and a mis-wired one stays plain English — the only check that exercises the actual failure. Without it, the first true verification of the localisation wiring is the first translated build.
+
 ## Constraints
 
 - iPhone only, iOS 26 minimum. No iPad, Mac, or watch layouts. The iOS 26 floor is what makes ComposableArchitecture 2's `StoreActor` and `TestStoreActor` available.
 - Tuist `Project.swift` wrapping a local SPM package; a thin AppHost target over modular SPM targets.
 - ComposableArchitecture 2, as the `ComposableArchitecture2` product of the `TCA26` package, pinned to `branch: "main"`. The app is deliberately a showcase of it; tracking an untagged branch is an accepted risk.
 - SQLiteData for persistence, with iCloud `SyncEngine` sync across one person's own devices. No sharing with other iCloud users in v1.
+- English only in v1, with strings catalogued per target from the first build. No second language is committed to; none is ruled out.
 - Synced tables require `UUID` primary keys, permit no `UNIQUE` outside the primary key, require an explicit `ON DELETE` on every foreign key, and reject reference cycles. Deletes are hard, and conflict resolution is field-wise last-writer-wins.
