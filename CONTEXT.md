@@ -198,13 +198,16 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 | `Preferences` | `Models` | The two `@Shared(.appStorage)` keys: `theme` and `hasCompletedFirstFetch` |
 | `Acknowledgements` | ComposableArchitecture2 | `Licenses.generated.swift`, the licence list and the licence detail screen |
 | `RandomiseFeature` | `Database`, `Models`, ComposableArchitecture2 | The randomise sheet and the whole draw |
-| `ListsFeature` | `Database`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Lists index and `ListDetail` |
-| `CombineFeature` | `Database`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Combine index and `ComboDetail` |
+| `ListDetailFeature` | `Database`, `Models`, `RandomiseFeature`, ComposableArchitecture2 | `ListDetail` — one List's Items, its editor sheets and its pinned Randomise |
+| `ListsFeature` | `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Lists index |
+| `CombineFeature` | `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Combine index and `ComboDetail` |
 | `SettingsFeature` | `Acknowledgements`, `BrzzUtils`, `Database`, `Models`, `Preferences`, ComposableArchitecture2 | The Settings form and `Logs/` |
 | `AppFeature` | `CombineFeature`, `ListsFeature`, `SettingsFeature`, ComposableArchitecture2 | The root `@Feature` and the `TabView` |
 | `App` | `AppFeature`, `Database`, `Preferences`, ComposableArchitecture2 | `SimpleRandomApp`, `prepareDependencies` at launch, store creation, `preferredColorScheme` |
 
-Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`. `CombineFeature` does not depend on `ListsFeature`: its List picker reads `Models.List` through its own `@FetchAll`.
+Eleven targets. `ListDetailFeature` is extracted for the same reason `RandomiseFeature` is: both tabs present it. A Combo's member row pushes the *real* List detail, not a copy or a read-only preview, so the screen cannot live inside `ListsFeature` without `CombineFeature` importing the whole Lists index to reach it. The two tabs stay peers, neither depending on the other.
+
+Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `ListDetailFeature`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`, and `ListDetail`'s behaviour is exercised through `ListsFeatureTests`. `CombineFeature` does not depend on `ListsFeature`: its List checklist reads `Models.List` through its own `@FetchAll`.
 
 Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data` and `swift-dependencies`. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
 
@@ -214,7 +217,11 @@ Features are `@Feature` types with `@ValueObservable` state; the 1.x vocabulary 
 
 `AppFeature.State` holds `var currentTab: Tab = .lists` as plain state — the app always opens on Lists — alongside the three tab features, scoped in `Features { }` under `TabView(selection: $store.currentTab)`.
 
-Each tab is index plus detail, one level deep. `ListsFeature.State` holds `@FetchAll var lists` and `var detail: ListDetail.State?`, wired with `.ifLet` and pushed with `.navigationDestination(item:)`; `ListDetail.State` holds `@FetchAll var items` and `var randomise: RandomiseFeature.State?`, presented with `.sheet(item:)`. Combine mirrors it exactly. The push and the sheet are therefore the same idiom — optional child state — rather than a `[Path.State]` stack, which buys nothing at depth one.
+`ListsFeature.State` holds `@FetchAll var lists` and `var detail: ListDetail.State?`, wired with `.ifLet` and pushed with `.navigationDestination(item:)`; `ListDetail.State` holds `@FetchAll var items` and `var randomise: RandomiseFeature.State?`, presented with `.sheet(item:)`. The push and the sheet are therefore the same idiom — optional child state — rather than a `[Path.State]` stack.
+
+Combine is one level deeper: `CombineFeature.State` → `ComboDetail.State` → `ListDetail.State`, because a Combo's member row pushes that member's List detail. Optional child state still carries it — the third level is another `.navigationDestination(item:)` off `ComboDetail` — so the idiom is unchanged and no `[Path.State]` stack is introduced.
+
+**`ListDetail` behaves identically wherever it is pushed.** Presented from a Combo it keeps its pinned Randomise button, its own editor sheets and its own `ListDraw` deck; nothing about it is conditional on the presenting tab. Drawing there draws from that List alone and leaves the Combo's `ComboDraw` rows untouched, which is exactly what **Decks are independent per surface** already says. The alternative — a flag suppressing the button when presented from Combine — was rejected as conditional behaviour on a shared screen to prevent something the domain model has already declared legal.
 
 `RandomiseFeature` owns the draw, not just its presentation. Its state carries a `DrawScope` — `.list(List.ID)` or `.combo(Combo.ID)` — and the feature builds the pool, picks, writes the `ListDraw` or `ComboDraw` row, detects exhaustion and reshuffles. Re-roll and Reshuffle are both buttons on the sheet, so the logic lives where the gestures land, and one test suite covers both tabs' deck arithmetic. Only the detail screens present it: you open a List, then randomise it.
 

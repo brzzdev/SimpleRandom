@@ -1,18 +1,30 @@
-// PROTOTYPE — Variant B: "One sheet"
+// PROTOTYPE — Variant B: "One sheet" — THE CHOSEN VARIANT, with issue #13's answers folded in.
 //
 // A Combo is *defined* in a single form: name, emoji, draw mode, and a Lists section listing
 // every List with a checkmark. Creating and editing are the same sheet, so there is exactly
-// one place a Combo is changed. The detail screen is then read-only — member rows plus the
-// pinned Randomise button — with an Edit button that reopens that same sheet.
-// Row caption is the member names, which is what you actually chose: "Lunch · Dinner · Takeaway".
+// one place a Combo's membership is changed, and nothing exists until Save — a half-made Combo
+// never reaches the tab or anyone else's iPhone.
+//
+// Folded in after the prototype was judged:
+//   - Row caption is **counts** — "3 Lists · 12 items", "3 Lists · Deck · 10 of 13 left" —
+//     mirroring the Lists tab and the only option that shows a Deck running down from the index.
+//   - A member row **pushes the real List detail**, the same screen the Lists tab pushes,
+//     Randomise bar and all. See SharedListDetail.
+//   - Deleting a Combo confirms only when it has members.
 
 import SwiftUI
+
+/// Combine goes two deep now: Combo detail, then a member's List detail.
+enum Route: Hashable {
+	case combo(Combo.ID)
+	case list(RandomList.ID)
+}
 
 struct VariantBCombineTab: View {
 	@Bindable var store: Store
 	@State private var editing: Combo?
 	@State private var isCreating = false
-	@State private var path: [Combo.ID] = []
+	@State private var path: [Route] = []
 	@State private var confirmingDelete: Combo?
 
 	var body: some View {
@@ -23,7 +35,7 @@ struct VariantBCombineTab: View {
 				} else {
 					List {
 						ForEach(store.combos) { combo in
-							NavigationLink(value: combo.id) {
+							NavigationLink(value: Route.combo(combo.id)) {
 								row(combo)
 							}
 							.swipeActions(edge: .leading) {
@@ -56,9 +68,12 @@ struct VariantBCombineTab: View {
 				}
 			}
 			.navigationTitle("Combine")
-			.task { if LaunchArgs.opensDetail, let first = store.combos.first { path = [first.id] } }
-			.navigationDestination(for: Combo.ID.self) { id in
-				VariantBComboDetail(store: store, id: id)
+			.task { if LaunchArgs.opensDetail, let first = store.combos.first { path = [.combo(first.id)] } }
+			.navigationDestination(for: Route.self) { route in
+				switch route {
+				case .combo(let id): VariantBComboDetail(store: store, id: id)
+				case .list(let id): SharedListDetail(store: store, id: id)
+				}
 			}
 			.toolbar {
 				Button("New Combo", systemImage: "plus") { isCreating = true }
@@ -82,7 +97,7 @@ struct VariantBCombineTab: View {
 				.opacity(combo.emoji == nil ? 0.25 : 1)
 			VStack(alignment: .leading, spacing: 2) {
 				Text(combo.name)
-				Text(store.namesCaption(for: combo))
+				Text(store.countsCaption(for: combo))
 					.font(.caption)
 					.foregroundStyle(.secondary)
 					.lineLimit(1)
@@ -113,11 +128,15 @@ struct VariantBComboDetail: View {
 				List {
 					Section {
 						ForEach(store.members(of: combo)) { list in
-							HStack(spacing: 12) {
-								Text(list.emoji ?? "🎲").font(.title2).opacity(list.emoji == nil ? 0.25 : 1)
-								VStack(alignment: .leading, spacing: 2) {
-									Text(list.name)
-									Text(list.poolCaption).font(.caption).foregroundStyle(.secondary)
+							// Pushes the *same* List detail the Lists tab pushes — which is why
+							// it is extracted into its own target both features depend on.
+							NavigationLink(value: Route.list(list.id)) {
+								HStack(spacing: 12) {
+									Text(list.emoji ?? "🎲").font(.title2).opacity(list.emoji == nil ? 0.25 : 1)
+									VStack(alignment: .leading, spacing: 2) {
+										Text(list.name)
+										Text(list.poolCaption).font(.caption).foregroundStyle(.secondary)
+									}
 								}
 							}
 						}

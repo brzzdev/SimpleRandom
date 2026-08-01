@@ -150,7 +150,7 @@ extension Store {
 		return .ready
 	}
 
-	/// Variant A's row caption: counts only.
+	/// The chosen row caption: counts, mirroring the Lists tab and showing a Deck running down.
 	func countsCaption(for combo: Combo) -> String {
 		let lists = members(of: combo).count
 		let pool = pool(of: combo)
@@ -165,7 +165,8 @@ extension Store {
 		}
 	}
 
-	/// Variant B's row caption: the member names, which is what you actually chose.
+	/// The rejected row caption: the member names. Kept as the record of what was on offer —
+	/// it reads well but drops the pool size and a Deck's progress, which counts keep.
 	func namesCaption(for combo: Combo) -> String {
 		let names = members(of: combo).map(\.name)
 		guard !names.isEmpty else { return "No Lists" }
@@ -259,25 +260,151 @@ struct ResultSheet: View {
 	}
 }
 
+/// The Lists path's result sheet — issue #11's variant A with *nothing* around the Item.
+struct ListResultSheet: View {
+	@Bindable var store: Store
+	let listID: RandomList.ID
+	@State private var drawn: Item?
+	@State private var isExhausted = false
+
+	private var list: RandomList { store.list(listID) ?? RandomList(name: "?") }
+
+	var body: some View {
+		VStack(spacing: 16) {
+			Spacer()
+			Text(isExhausted ? "That's the whole deck" : (drawn?.title ?? "—"))
+				.font(.largeTitle.bold())
+				.multilineTextAlignment(.center)
+				.minimumScaleFactor(0.5)
+			Spacer()
+			Button(isExhausted ? "Reshuffle" : "Again") {
+				if isExhausted { reshuffle() }
+				draw()
+			}
+			.buttonStyle(.borderedProminent)
+			.controlSize(.large)
+		}
+		.padding(24)
+		.presentationDetents([.medium])
+		.onAppear { draw() }
+	}
+
+	private func draw() {
+		let candidates = list.drawMode == .deck ? list.items.filter { !$0.isDealt } : list.items
+		guard let pick = candidates.randomElement() else {
+			isExhausted = true
+			return
+		}
+		isExhausted = false
+		drawn = pick
+		guard list.drawMode == .deck, let index = store.lists.firstIndex(where: { $0.id == listID }) else { return }
+		store.lists[index].items.firstIndex { $0.id == pick.id }.map {
+			store.lists[index].items[$0].isDealt = true
+		}
+	}
+
+	private func reshuffle() {
+		guard let index = store.lists.firstIndex(where: { $0.id == listID }) else { return }
+		for item in store.lists[index].items.indices {
+			store.lists[index].items[item].isDealt = false
+		}
+	}
+}
+
+/// Issue #10's List detail. Not up for decision here — it is in the prototype because #13
+/// decided a Combo's member row pushes **this** screen, unchanged, Randomise bar and all.
+/// That is what forces it out of `ListsFeature` into a target both tabs depend on.
+struct SharedListDetail: View {
+	@Bindable var store: Store
+	let id: RandomList.ID
+	@State private var isRandomising = false
+
+	private var list: RandomList { store.list(id) ?? RandomList(name: "?") }
+	private var isExhausted: Bool {
+		list.drawMode == .deck && !list.items.isEmpty && list.items.allSatisfy(\.isDealt)
+	}
+
+	var body: some View {
+		Group {
+			if list.items.isEmpty {
+				ContentUnavailableView(
+					"No Items",
+					systemImage: "text.badge.plus",
+					description: Text("Add the things you want to pick between.")
+				)
+			} else {
+				List(list.items) { item in
+					HStack {
+						Text(item.title).foregroundStyle(item.isDealt ? .secondary : .primary)
+						Spacer()
+						if item.isDealt {
+							Image(systemName: "checkmark").font(.caption).foregroundStyle(.secondary)
+						}
+					}
+				}
+			}
+		}
+		.navigationTitle(list.name)
+		.navigationBarTitleDisplayMode(.inline)
+		.toolbar {
+			Button("Add Item", systemImage: "plus") {}
+		}
+		.safeAreaInset(edge: .bottom) {
+			// Identical whether it was pushed from Lists or from inside a Combo. The deck it
+			// runs is this List's own, which is what "decks are independent per surface" means.
+			VStack(spacing: 6) {
+				Button {
+					isRandomising = true
+				} label: {
+					Label(isExhausted ? "Reshuffle" : "Randomise", systemImage: "dice")
+						.frame(maxWidth: .infinity)
+				}
+				.buttonStyle(.borderedProminent)
+				.controlSize(.large)
+				.disabled(list.items.isEmpty)
+
+				Text(list.items.isEmpty ? "Add an item to randomise" : listCaption)
+					.font(.caption)
+					.foregroundStyle(.secondary)
+			}
+			.padding(.horizontal)
+			.padding(.vertical, 8)
+			.background(.bar)
+		}
+		.sheet(isPresented: $isRandomising) {
+			ListResultSheet(store: store, listID: id)
+		}
+	}
+
+	private var listCaption: String {
+		guard list.drawMode == .deck else { return list.poolCaption }
+		let left = list.items.count - list.items.filter(\.isDealt).count
+		return "Deck · \(left) of \(list.items.count) left"
+	}
+}
+
 /// Not the subject of this ticket — issue #10 settled the Lists tab. Here only so the real
-/// tab bar is in the picture, and so the sample Lists are visible while judging a Combo.
+/// tab bar is in the picture, the sample Lists are visible while judging a Combo, and the
+/// pushed List detail can be seen to be the *same* screen from both tabs.
 struct ListsTabStub: View {
-	let store: Store
+	@Bindable var store: Store
 
 	var body: some View {
 		NavigationStack {
 			List(store.lists) { list in
-				HStack(spacing: 12) {
-					Text(list.emoji ?? "🎲").font(.title2).opacity(list.emoji == nil ? 0.25 : 1)
-					VStack(alignment: .leading, spacing: 2) {
-						Text(list.name)
-						Text(list.poolCaption).font(.caption).foregroundStyle(.secondary)
+				NavigationLink(value: list.id) {
+					HStack(spacing: 12) {
+						Text(list.emoji ?? "🎲").font(.title2).opacity(list.emoji == nil ? 0.25 : 1)
+						VStack(alignment: .leading, spacing: 2) {
+							Text(list.name)
+							Text(list.poolCaption).font(.caption).foregroundStyle(.secondary)
+						}
 					}
 				}
 			}
 			.navigationTitle("Lists")
-			.overlay(alignment: .bottom) {
-				Text("Settled by #10 — stub").font(.caption2).foregroundStyle(.secondary).padding(8)
+			.navigationDestination(for: RandomList.ID.self) { id in
+				SharedListDetail(store: store, id: id)
 			}
 		}
 	}

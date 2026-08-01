@@ -42,8 +42,19 @@ edited** — and, as a rider, what a Combo's row caption says.
 | Remove a List | trailing swipe on the member row | untick it in the form | tap the member row |
 | Edit name/emoji/mode | leading swipe on the index row | `Edit`, same form | `Edit` → small identity-only sheet |
 | Detail screen is | the member Lists | the member Lists, read-only | every List, membership as checkmarks |
-| Row caption | `3 Lists · 13 items` | `Lunch · Dinner · Takeaway` | `🥪🍝🥡  13 items` |
+| Row caption | `3 Lists · 12 items` | `Lunch · Dinner · Takeaway` | `🥪🍝🥡  12 items` |
 | Half-made Combo can sync | yes (created before Lists are picked) | no (nothing exists until Save) | yes, and unnamed |
+
+## The verdict
+
+**B won**, and the answers below are folded into it. A and C stay as they were, as the record of
+what was on offer.
+
+- **Row caption is counts** (A's), not names: it mirrors the Lists tab and is the only option that
+  shows a Deck running down from the index.
+- **A member row pushes the real List detail** — the same screen the Lists tab pushes, Randomise
+  bar and all. Tap `Lists` in the tab bar and open a List to see it is literally the same view.
+- **Deleting a Combo confirms only when it has members**, as the prototype already did.
 
 ## Held the same across all three
 
