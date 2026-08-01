@@ -197,17 +197,20 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 | `Database` | `Models`, SQLiteData | `migrator`, `appDatabase()`, `inMemory()`, the `SyncEngine` factory and its `SyncEngineDelegate` |
 | `Preferences` | `Models` | The two `@Shared(.appStorage)` keys: `theme` and `hasCompletedFirstFetch` |
 | `Acknowledgements` | ComposableArchitecture2 | `Licenses.generated.swift`, the licence list and the licence detail screen |
+| `Components` | `Models`, ComposableArchitecture2 | The three views both tabs render — `EmojiField`, the index row, the pinned Randomise bar |
 | `RandomiseFeature` | `Database`, `Models`, ComposableArchitecture2 | The randomise sheet and the whole draw |
-| `ListDetailFeature` | `Database`, `Models`, `RandomiseFeature`, ComposableArchitecture2 | `ListDetail` — one List's Items, its editor sheets and its pinned Randomise |
-| `ListsFeature` | `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Lists index |
-| `CombineFeature` | `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Combine index and `ComboDetail` |
+| `ListDetailFeature` | `Components`, `Database`, `Models`, `RandomiseFeature`, ComposableArchitecture2 | `ListDetail` — one List's Items, its editor sheets and its pinned Randomise |
+| `ListsFeature` | `Components`, `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Lists index |
+| `CombineFeature` | `Components`, `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Combine index and `ComboDetail` |
 | `SettingsFeature` | `Acknowledgements`, `BrzzUtils`, `Database`, `Models`, `Preferences`, ComposableArchitecture2 | The Settings form and `Logs/` |
 | `AppFeature` | `CombineFeature`, `ListsFeature`, `SettingsFeature`, ComposableArchitecture2 | The root `@Feature` and the `TabView` |
 | `App` | `AppFeature`, `Database`, `Preferences`, ComposableArchitecture2 | `SimpleRandomApp`, `prepareDependencies` at launch, store creation, `preferredColorScheme` |
 
-Eleven targets. `ListDetailFeature` is extracted for the same reason `RandomiseFeature` is: both tabs present it. A Combo's member row pushes the *real* List detail, not a copy or a read-only preview, so the screen cannot live inside `ListsFeature` without `CombineFeature` importing the whole Lists index to reach it. The two tabs stay peers, neither depending on the other.
+Twelve targets. `ListDetailFeature` is extracted for the same reason `RandomiseFeature` is: both tabs present it. A Combo's member row pushes the *real* List detail, not a copy or a read-only preview, so the screen cannot live inside `ListsFeature` without `CombineFeature` importing the whole Lists index to reach it. The two tabs stay peers, neither depending on the other.
 
-Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `ListDetailFeature`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`, and `ListDetail`'s behaviour is exercised through `ListsFeatureTests`. `CombineFeature` does not depend on `ListsFeature`: its List checklist reads `Models.List` through its own `@FetchAll`.
+`Components` exists for the same peer problem at view scale. `EmojiField` is rendered by the List editor and the Combo form, the index row by both indexes, and the pinned Randomise bar by `ListDetail` and `ComboDetail` — and each carries accessibility treatment (see **Accessibility**) too fiddly to survive being written twice. `ListDetailFeature` is the only target both tabs already reach, and an *index* row does not belong in a *detail* target. It holds views and no logic, so it carries no tests.
+
+Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `Components`, `ListDetailFeature`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`, and `ListDetail`'s behaviour is exercised through `ListsFeatureTests`. `CombineFeature` does not depend on `ListsFeature`: its List checklist reads `Models.List` through its own `@FetchAll`.
 
 Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data` and `swift-dependencies`. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
 
@@ -223,7 +226,9 @@ Combine is one level deeper: `CombineFeature.State` → `ComboDetail.State` → 
 
 **`ListDetail` behaves identically wherever it is pushed.** Presented from a Combo it keeps its pinned Randomise button, its own editor sheets and its own `ListDraw` deck; nothing about it is conditional on the presenting tab. Drawing there draws from that List alone and leaves the Combo's `ComboDraw` rows untouched, which is exactly what **Decks are independent per surface** already says. The alternative — a flag suppressing the button when presented from Combine — was rejected as conditional behaviour on a shared screen to prevent something the domain model has already declared legal.
 
-`RandomiseFeature` owns the draw, not just its presentation. Its state carries a `DrawScope` — `.list(List.ID)` or `.combo(Combo.ID)` — and the feature builds the pool, picks, writes the `ListDraw` or `ComboDraw` row, detects exhaustion and reshuffles. Re-roll and Reshuffle are both buttons on the sheet, so the logic lives where the gestures land, and one test suite covers both tabs' deck arithmetic. Only the detail screens present it: you open a List, then randomise it.
+`RandomiseFeature` owns the draw, not just its presentation. Its state carries a `DrawScope` — `.list(List.ID)` or `.combo(Combo.ID)` — and the feature builds the pool, picks, writes the `ListDraw` or `ComboDraw` row, detects exhaustion and reshuffles.
+
+Its state also carries `drawToken`, an `Int` incremented on every draw and rendered by nothing. A re-roll that lands on the Item already shown changes no other state, so it is the only value the sheet's haptic and its VoiceOver announcement can trigger on — see **Accessibility**. It is not persisted; **Draw results are not persisted** is unchanged. Re-roll and Reshuffle are both buttons on the sheet, so the logic lives where the gestures land, and one test suite covers both tabs' deck arithmetic. Only the detail screens present it: you open a List, then randomise it.
 
 ### Seams
 
@@ -236,6 +241,59 @@ Combine is one level deeper: `CombineFeature.State` → `ComboDetail.State` → 
 - **Everything else the app owns** is `@FeatureEnvironment`, the library's native mechanism. `@Dependency` is reserved for what crosses into SQLiteData, which is what swift-dependencies is for.
 
 The `Dependencies` trait on TCA26 is what makes this work: without it the store never re-establishes `DependencyValues` around feature work, and overrides set at store creation silently do not apply.
+
+## Accessibility
+
+**VoiceOver and Dynamic Type are v1 requirements, screen by screen.** The app is stock SwiftUI, so most of it works untouched; what follows is the part that does not.
+
+Stated non-goals for v1: Switch Control, Voice Control and Full Keyboard Access tuning beyond what standard controls give; VoiceOver rotor customisation; audio graphs. Reduce Motion needs nothing — v1 ships no animation. Differentiate Without Colour needs nothing — a dealt Item is secondary text *and* a checkmark, never colour alone.
+
+### The re-roll announcement
+
+Nothing in SwiftUI announces changed `Text` inside a presented sheet, so **Again** is silent to VoiceOver — worse than the sighted case, which at least gets the haptic. Every re-roll therefore posts an `AccessibilityNotification.Announcement` at `.high` priority, from the view, on `drawToken` changing — the same trigger as the haptic, because they are two channels acknowledging one event. Routing it through the reducer was rejected: an announcement is a UI-layer acknowledgement, and `RandomiseFeatureTests` should not carry a seam that only ever tests its own mock.
+
+The token's initial value is what makes this fire **on re-roll only**: the sheet's presentation already reads the opening result, and announcing there talks over it.
+
+What it says, in the fewest words that stay unambiguous:
+
+| Case | Announcement |
+| --- | --- |
+| Lists path | `Pizza` |
+| Combine path | `Pizza, from Lunch` |
+| Re-rolling into an exhausted Deck | `That's the whole deck` |
+
+Provenance is in the Combine announcement because **Draw results are not persisted** makes it load-bearing — two "Pizza"s are otherwise indistinguishable — and on re-roll the announcement is the only channel carrying it. The source List's emoji is *excluded*: VoiceOver reads it by its CLDR name, so including it puts "sandwich" in front of the only word that disambiguates. The exhausted case announces because the result element it replaces has ceased to exist, leaving focus wherever the system puts it.
+
+**This makes the VoiceOver path better served than the sighted path**, where a repeat draw with system haptics off is still indistinguishable from a dead button. That asymmetry is accepted, not overlooked: an announcement is cheap and unambiguous, and the visual fallback was refused on its own merits.
+
+### Labels
+
+**Row emoji is hidden from VoiceOver everywhere.** It decorates the name it sits beside, and the dimmed 🎲 placeholder would announce "game die" on every List that has not got one. It stays audible in `EmojiField`, where it is the thing being edited rather than an ornament.
+
+Spoken separators are commas, not `·`. Rows read:
+
+| Row | Label |
+| --- | --- |
+| Lists index | `Lunch, Deck, 10 of 13 left` |
+| Combine index | `Friday night, 3 Lists, Deck, 10 of 13 left` |
+| Combo member, membership picker | `Lunch, 4 items` — plus the **Selected** trait when ticked |
+| Item, dealt | `Pizza`, value `Dealt` |
+
+**Dealt is a value, not a trait.** `.isSelected` says "Selected", which is the wrong word: nobody selected it, the deck dealt it. Selection *is* a trait in the membership form, where ticking is exactly that.
+
+**The pinned Randomise bar is one accessibility element** — `.accessibilityElement(children: .combine)` over the button and its caption — reading `Randomise, Add an item to randomise, dimmed, button`, or `Randomise, Deck, 10 of 13 left, button`. The caption is the only thing that says *why* the button is dimmed, and it must not depend on a setting the user controls: putting it in `accessibilityHint` and hiding the visible caption would make the reason unreachable whenever "Speak Hints" is off.
+
+`EmojiField` is a `UIViewRepresentable` and inherits no label, so it declares `accessibilityLabel("Emoji")` and an `accessibilityValue` of the emoji, or `None`. It is skippable in one swipe and nothing gates Save on it. Overriding `textInputMode` also stops a hardware keyboard typing into it; accepted, since the alternative is accepting arbitrary text into a one-grapheme column.
+
+**Counts are pluralised with automatic grammar agreement.** `N items` and `N Lists` are not string interpolation — a one-item List otherwise renders "1 items" for everyone, VoiceOver or not.
+
+### Dynamic Type
+
+**Rows never clamp and never truncate.** They wrap and grow tall, which is correct for a list whose whole content is text the user wrote.
+
+**The pinned bar never clamps either.** At the largest accessibility size it costs about a quarter of the screen permanently. Accepted: capping type size on the app's primary action is the least defensible place to do it, and the cost is scrolling in screens that hold few rows.
+
+**The result sheet's detent grows at accessibility sizes** — `.medium` becomes `.large`. The fixed medium detent was checked only to `.accessibility3`; past that a long title either overflows or scales below half, and scaling down is a direct contradiction of the setting the user just turned up. `minimumScaleFactor(0.5)` goes back to being a safety net for one absurd Item rather than the thing holding the layout together. Everyone below the accessibility sizes sees the sheet exactly as designed.
 
 ## Constraints
 
