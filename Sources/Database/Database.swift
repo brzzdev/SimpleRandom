@@ -14,15 +14,9 @@ public import SQLiteData
 /// "not yet synced" badge to bind to, and attaching it would invite explaining sync at a
 /// granularity the rest of the app avoids.
 public func appDatabase() throws -> any DatabaseWriter {
-	var configuration = Configuration()
-	// Spelled out rather than left to GRDB's default, because every cascade in this schema
-	// — and so every rule `DatabaseTests` asserts — depends on it.
-	configuration.foreignKeysEnabled = true
-	configuration.prepareDatabase { db in
-		db.add(function: $uuidV7)
-	}
-
-	let database = try SQLiteData.defaultDatabase(configuration: configuration)
+	let database = try SQLiteData.defaultDatabase(
+		configuration: configuration(registering: { $0.add(function: $uuidV7) })
+	)
 	try migrator.migrate(database)
 	return database
 }
@@ -33,13 +27,24 @@ public func appDatabase() throws -> any DatabaseWriter {
 /// would forfeit the entire reason those tests exist, and a repository client mocked in
 /// front of this would only add drift (ADR-0019).
 public func inMemory() throws -> any DatabaseWriter {
-	var configuration = Configuration()
-	configuration.foreignKeysEnabled = true
-	configuration.prepareDatabase { db in
-		db.add(function: $countingID)
-	}
-
-	let database = try DatabaseQueue(configuration: configuration)
+	let database = try DatabaseQueue(
+		configuration: configuration(registering: { $0.add(function: $countingID) })
+	)
 	try migrator.migrate(database)
 	return database
+}
+
+/// What the two databases share, which is everything but the generator answering to
+/// `newID()` and the writer they are opened as.
+///
+/// `foreignKeysEnabled` is spelled out rather than left to GRDB's default, because every
+/// cascade in this schema — and so every rule `DatabaseTests` asserts — depends on it, and a
+/// library default is a poor place for a load-bearing fact to live.
+private func configuration(
+	registering idGenerator: @escaping @Sendable (Database) -> Void,
+) -> Configuration {
+	var configuration = Configuration()
+	configuration.foreignKeysEnabled = true
+	configuration.prepareDatabase(idGenerator)
+	return configuration
 }

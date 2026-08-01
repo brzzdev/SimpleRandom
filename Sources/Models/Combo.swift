@@ -30,7 +30,7 @@ public struct Combo: Hashable, Identifiable, Sendable {
 		deletedAt: Date? = nil,
 		drawMode: DrawMode = .independent,
 		emoji: String? = nil,
-		name: String = "",
+		name: String,
 		position: Int? = nil,
 		updatedAt: Date? = nil,
 	) {

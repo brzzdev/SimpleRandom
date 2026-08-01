@@ -48,7 +48,7 @@ nonisolated func uuidV7() -> UUID {
 /// never collide with these.
 @DatabaseFunction("newID")
 nonisolated func countingID() -> UUID {
-	let count = countingIDCount.withLock { count in
+	let count = countingIDSequence.withLock { count in
 		count += 1
 		return count
 	}
@@ -58,7 +58,7 @@ nonisolated func countingID() -> UUID {
 	return bytes.uuid
 }
 
-private let countingIDCount = Mutex(0)
+private let countingIDSequence = Mutex(0)
 
 extension [UInt8] {
 	/// The sixteen bytes read back as a `UUID`, whatever produced them.

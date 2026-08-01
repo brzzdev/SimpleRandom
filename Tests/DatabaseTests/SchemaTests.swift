@@ -184,6 +184,8 @@ struct TableShape: Sendable {
 	]
 }
 
+/// Property order here is `pragma_foreign_key_list`'s column order, not alphabetical:
+/// `#sql` decodes a `@Selection` positionally.
 @Selection
 struct ForeignKey: Hashable, Sendable {
 	let from: String

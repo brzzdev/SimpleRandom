@@ -33,7 +33,7 @@ public struct Item: Hashable, Identifiable, Sendable {
 		deletedAt: Date? = nil,
 		listID: List.ID,
 		position: Int? = nil,
-		title: String = "",
+		title: String,
 		updatedAt: Date? = nil,
 		weight: Int? = nil,
 	) {
