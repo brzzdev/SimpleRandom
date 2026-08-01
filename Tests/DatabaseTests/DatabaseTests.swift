@@ -5,6 +5,7 @@
 
 internal import Database
 internal import DependenciesTestSupport
+internal import Foundation
 internal import SQLiteData
 internal import Testing
 
@@ -21,3 +22,9 @@ internal import Testing
 /// about `seedSampleData()` rather than about the domain.
 @Suite(.dependency(\.defaultDatabase, try inMemory()))
 internal struct DatabaseTests {}
+
+extension Date {
+	/// The one timestamp every seeded row in this target carries. Nothing here asserts on
+	/// ordering, and a fixed instant keeps the seeded worlds about their shape.
+	internal static let seed = Date(timeIntervalSince1970: 1_234_567_890)
+}

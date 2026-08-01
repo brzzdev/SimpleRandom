@@ -40,6 +40,11 @@ public func inMemory() throws -> any DatabaseWriter {
 /// `foreignKeysEnabled` is spelled out rather than left to GRDB's default, because every
 /// cascade in this schema — and so every rule `DatabaseTests` asserts — depends on it, and a
 /// library default is a poor place for a load-bearing fact to live.
+///
+/// The parameter is the registration rather than the function itself, which would read
+/// better: `@DatabaseFunction` generates types that are not `Sendable`, so one cannot be
+/// carried into `prepareDatabase`'s `@Sendable` closure. Referring to the global directly
+/// inside that closure is fine, which is what each caller does.
 private func configuration(
 	registering idGenerator: @escaping @Sendable (Database) -> Void,
 ) -> Configuration {

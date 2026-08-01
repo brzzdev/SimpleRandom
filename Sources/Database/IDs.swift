@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 
+internal import Dependencies
 internal import Foundation
 internal import SQLiteData
 internal import Synchronization
@@ -22,47 +23,39 @@ internal import Synchronization
 /// That is what makes `(createdAt, id)` — the app's one sort order — agree with insertion
 /// order rather than breaking ties arbitrarily. It does not fix clock skew between devices,
 /// and nothing short of a logical clock would.
+///
+/// Nothing in Foundation, GRDB, SQLiteData or swift-dependencies mints a v7, so this is
+/// written out — but only the parts a v4 does not already give: `UUID()` supplies sixteen
+/// random bytes, and the timestamp and the version nibble go over the top of them.
 @DatabaseFunction("newID")
 nonisolated func uuidV7() -> UUID {
-	var bytes = [UInt8](repeating: 0, count: 16)
-	for index in bytes.indices {
-		bytes[index] = .random(in: .min ... .max)
-	}
+	var bytes = withUnsafeBytes(of: UUID().uuid) { Array($0) }
 
 	let milliseconds = UInt64((Date().timeIntervalSince1970 * 1_000).rounded())
 	for offset in 0 ..< 6 {
 		bytes[offset] = UInt8(truncatingIfNeeded: milliseconds >> (8 * (5 - UInt64(offset))))
 	}
-	bytes[6] = bytes[6] & 0x0F | 0x70 // Version 7.
-	bytes[8] = bytes[8] & 0x3F | 0x80 // Variant 2.
+	// Version 7 goes over `UUID()`'s 4. Variant 2 is already what it set, and is written
+	// again rather than relied upon: nothing here would notice if that stopped being true.
+	bytes[6] = bytes[6] & 0x0F | 0x70
+	bytes[8] = bytes[8] & 0x3F | 0x80
 
-	return bytes.uuid
+	return bytes.withUnsafeBytes { UUID(uuid: $0.loadUnaligned(as: uuid_t.self)) }
 }
 
 /// The generator `inMemory()` registers: `00000000-0000-0000-0000-000000000001` and up, so
 /// a test's ids are legible rather than merely unique.
 ///
 /// The counter is process-wide and never resets, which is the point — ids stay distinct
-/// across every test in a run, and no test can come to depend on being the first one. The
-/// shape matches swift-dependencies' `UUID(_: Int)`, so seeds written with negative ids can
-/// never collide with these.
+/// across every test in a run, and no test can come to depend on being the first one. It
+/// mints through swift-dependencies' own `UUID(_: Int)`, which is what seeds are written
+/// with, so a negative seed can never collide with one of these by construction.
 @DatabaseFunction("newID")
 nonisolated func countingID() -> UUID {
-	let count = countingIDSequence.withLock { count in
+	UUID(countingIDSequence.withLock { count in
 		count += 1
 		return count
-	}
-
-	var bytes = [UInt8](repeating: 0, count: 16)
-	withUnsafeBytes(of: UInt64(count).bigEndian) { bytes.replaceSubrange(8 ..< 16, with: $0) }
-	return bytes.uuid
+	})
 }
 
 private let countingIDSequence = Mutex(0)
-
-extension [UInt8] {
-	/// The sixteen bytes read back as a `UUID`, whatever produced them.
-	fileprivate var uuid: UUID {
-		withUnsafeBytes { UUID(uuid: $0.loadUnaligned(as: uuid_t.self)) }
-	}
-}

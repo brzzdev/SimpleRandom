@@ -17,6 +17,29 @@ extension DatabaseTests {
 	/// permanent (ADR-0002).
 	@Suite
 	struct SchemaTests {
+		@Test
+		func theSchemaHoldsExactlyTheSixTablesTheDomainModelDeclares() async throws {
+			@Dependency(\.defaultDatabase) var database
+
+			let tables = try await database.read { db in
+				try #sql(
+					"""
+					SELECT "name" FROM sqlite_schema
+					WHERE "type" = 'table' AND "name" NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+					AND "name" <> 'grdb_migrations'
+					ORDER BY "name"
+					""",
+					as: String.self
+				)
+				.fetchAll(db)
+			}
+
+			// Every other test here is parameterised over `TableShape.all`, so without this
+			// one a seventh table would be added to the migrator and asserted about by
+			// nothing — which is precisely the append-only mistake this suite exists to catch.
+			#expect(tables == TableShape.all.map(\.name))
+		}
+
 		@Test(arguments: TableShape.all)
 		func tableHasExactlyTheColumnsTheDomainModelDeclares(shape: TableShape) async throws {
 			@Dependency(\.defaultDatabase) var database
@@ -97,13 +120,11 @@ extension DatabaseTests {
 		func insertingWithoutAnIDTakesOneFromTheSchemasDefault() async throws {
 			@Dependency(\.defaultDatabase) var database
 
-			let createdAt = Date(timeIntervalSince1970: 1_234_567_890)
-
 			try await database.write { db in
 				try Models.List
 					.insert { ($0.createdAt, $0.name) } values: {
-						(createdAt, "Lunch")
-						(createdAt, "Films")
+						(.seed, "Lunch")
+						(.seed, "Films")
 					}
 					.execute(db)
 			}
@@ -131,7 +152,7 @@ struct TableShape: Sendable {
 	let name: String
 	let primaryKeyColumn: String
 
-	/// All six, and the fact that there are six.
+	/// All six, in the order `sqlite_schema` lists them.
 	static let all: [Self] = [
 		Self(
 			columns: ["comboID", "createdAt", "id", "itemID", "position", "updatedAt"],

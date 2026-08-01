@@ -163,23 +163,10 @@ private struct Snapshot: Equatable {
 	let items: Set<UUID>
 	let listDraws: Set<UUID>
 	let lists: Set<UUID>
+}
 
-	init(
-		comboDraws: Set<UUID>,
-		comboLists: Set<UUID>,
-		combos: Set<UUID>,
-		items: Set<UUID>,
-		listDraws: Set<UUID>,
-		lists: Set<UUID>,
-	) {
-		self.comboDraws = comboDraws
-		self.comboLists = comboLists
-		self.combos = combos
-		self.items = items
-		self.listDraws = listDraws
-		self.lists = lists
-	}
-
+extension Snapshot {
+	/// Read in one transaction, so what a test asserts on is one moment rather than six.
 	init(_ database: any DatabaseReader) async throws {
 		self = try await database.read { db in
 			try Self(
@@ -192,10 +179,4 @@ private struct Snapshot: Equatable {
 			)
 		}
 	}
-}
-
-extension Date {
-	/// The one timestamp every seeded row carries. Nothing here asserts on ordering, and a
-	/// fixed value keeps the worlds above about their shape.
-	fileprivate static let seed = Date(timeIntervalSince1970: 1_234_567_890)
 }
