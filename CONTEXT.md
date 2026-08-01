@@ -204,7 +204,7 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 | `AppFeature` | `CombineFeature`, `ListsFeature`, `SettingsFeature`, ComposableArchitecture2 | The root `@Feature` and the `TabView` |
 | `App` | `AppFeature`, `Database`, `Preferences`, ComposableArchitecture2 | `SimpleRandomApp`, `prepareDependencies` at launch, store creation, `preferredColorScheme` |
 
-One test target per feature target, plus `ModelsTests`. `CombineFeature` does not depend on `ListsFeature`: its List picker reads `Models.List` through its own `@FetchAll`.
+Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`. `CombineFeature` does not depend on `ListsFeature`: its List picker reads `Models.List` through its own `@FetchAll`.
 
 Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data` and `swift-dependencies`. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
 
@@ -220,9 +220,12 @@ Each tab is index plus detail, one level deep. `ListsFeature.State` holds `@Fetc
 
 ### Seams
 
-- **Reads** are `@FetchAll` / `@FetchOne` declared in `Feature.State`, which the `@ValueObservable` macro allowlists by design. There is no repository client: a client returns snapshots rather than live updates, and `SQLiteDataTestSupport` gives each test a real in-memory database, so a hand-written mock would only add drift.
+- **Reads** are `@FetchAll` / `@FetchOne` declared in `Feature.State`, which the `@ValueObservable` macro allowlists by design. There is no repository client: a client returns snapshots rather than live updates, and `Database.inMemory()` gives each test a real database built by the real `migrator`, so a hand-written mock would only add drift. (`SQLiteDataTestSupport` ships `assertQuery` and nothing else; it does not provide databases.)
 - **Writes** are `@Dependency(\.defaultDatabase)` inside `store.addTask`, wrapped in `withErrorReporting`.
 - **Randomness** is `@Dependency(\.withRandomNumberGenerator)`.
+- **Primary keys** are a custom SQLite function registered on the connection and used as each table's column default — `appDatabase()` registers a UUIDv7 generator, `inMemory()` a counting variant. No insert site mentions an id, so none can forget one, and UUIDv7's time-ordering makes the `id` tie-break in **Sync**'s sort order agree with creation order rather than arbitrarily.
+- **`createdAt`** is `@Dependency(\.date)`.
+- **The account-change policy** is a pure `shouldDeleteLocalData(on: CKSyncEngine.Event.AccountChange.ChangeType) -> Bool` in `Database`, with `SyncEngineDelegate`'s method reduced to a single call to it. The delegate method takes a live `SyncEngine`, so it cannot be invoked without a CloudKit container — and the library's default implementation wipes on `.signOut`, which **Sync** rules out. The policy is extracted so that the one silent, data-destroying default in the app is testable.
 - **Everything else the app owns** is `@FeatureEnvironment`, the library's native mechanism. `@Dependency` is reserved for what crosses into SQLiteData, which is what swift-dependencies is for.
 
 The `Dependencies` trait on TCA26 is what makes this work: without it the store never re-establishes `DependencyValues` around feature work, and overrides set at store creation silently do not apply.
