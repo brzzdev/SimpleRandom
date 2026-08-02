@@ -47,3 +47,30 @@ public struct Item: Hashable, Identifiable, Sendable {
 		self.weight = weight
 	}
 }
+
+/// The macro generates `Draft` without carrying the conformances declared above, and every
+/// one of its fields is `Sendable` already. Features build a draft on the main actor and
+/// hand it to a database write, so this is the conformance that lets one cross.
+extension Item.Draft: Sendable {}
+
+extension Item.Draft {
+	/// An Item that has not been saved yet.
+	///
+	/// The generated memberwise initialiser is internal to this target, so this is what the
+	/// feature targets build a new Item with. It takes only the title a creating user supplies,
+	/// the List it belongs to and the sort key, and leaves `id` `nil` so the schema's `newID()`
+	/// default mints it — no insert site in the app names an id (ADR-0011).
+	public init(createdAt: Date, listID: List.ID, title: String) {
+		// Every argument is spelled out, `nil`s included, so this cannot resolve to itself.
+		self.init(
+			id: nil,
+			createdAt: createdAt,
+			deletedAt: nil,
+			listID: listID,
+			position: nil,
+			title: title,
+			updatedAt: nil,
+			weight: nil,
+		)
+	}
+}
