@@ -22,6 +22,17 @@
           }
         }
       }
+    },
+    "Randomise" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Randomise"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
