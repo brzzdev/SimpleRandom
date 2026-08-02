@@ -6,24 +6,27 @@
 public import ComposableArchitecture2
 public import Models
 
+public import RandomiseFeature
+
 internal import Dependencies
 internal import IssueReporting
 internal import SQLiteData
 
-/// `ListDetail` — one List's Items, and the gestures that add, edit and delete them (#20).
+/// `ListDetail` — one List's Items, the gestures that add, edit and delete them, and the
+/// pinned Randomise that draws one (#20, #21).
 ///
 /// Both tabs push it, which is why it is a target of its own rather than part of the Lists
 /// index: a Combo's member row pushes the *real* List detail, and the screen cannot live
 /// inside `ListsFeature` without `CombineFeature` importing the whole index to reach it
-/// (ADR-0014).
-///
-/// The pinned Randomise bar is not here yet — it arrives with the draw in #21.
+/// (ADR-0014). It behaves identically wherever it is pushed: drawing here draws from this
+/// List alone and leaves a presenting Combo's own deck untouched.
 @Feature
 public struct ListDetail {
 	public struct State: Identifiable {
 		public var editor: ItemEditor.State?
 		@FetchAll internal var items: [Item]
 		public let list: Models.List
+		public var randomise: RandomiseFeature.State?
 
 		public var id: Models.List.ID { list.id }
 
@@ -45,6 +48,8 @@ public struct ListDetail {
 		case deleteSwiped(Item)
 		case editor(ItemEditor.Action)
 		case newItemButtonTapped
+		case randomise(RandomiseFeature.Action)
+		case randomiseButtonTapped
 		case rowTapped(Item)
 	}
 
@@ -77,10 +82,19 @@ public struct ListDetail {
 					draft: Item.Draft(createdAt: now, listID: state.list.id, title: ""),
 				)
 
+			case .randomise:
+				break
+
+			case .randomiseButtonTapped:
+				// The scope is all the sheet is handed: it owns the pool and the pick from here,
+				// and it draws its opening result as it is built (ADR-0016).
+				state.randomise = RandomiseFeature.State(scope: .list(state.list.id))
+
 			case .rowTapped(let item):
 				state.editor = ItemEditor.State(draft: Item.Draft(item))
 			}
 		}
 		.ifLet(\.editor, action: \.editor) { ItemEditor() }
+		.ifLet(\.randomise, action: \.randomise) { RandomiseFeature() }
 	}
 }

@@ -6,9 +6,12 @@
 public import ComposableArchitecture2
 public import SwiftUI
 
+internal import Components
 internal import Models
+internal import RandomiseFeature
 
-/// One List's Items: inline title, `+` in the toolbar, tap to edit, swipe to delete.
+/// One List's Items: inline title, `+` in the toolbar, tap to edit, swipe to delete, and the
+/// pinned Randomise that draws one.
 public struct ListDetailView: View {
 	@Bindable private var store: StoreOf<ListDetail>
 
@@ -34,8 +37,33 @@ public struct ListDetailView: View {
 				Label { Text("New Item", bundle: #bundle) } icon: { Image(systemName: "plus") }
 			}
 		}
+		// Over the empty state as well as over the Items: an empty List is legal — you have just
+		// made it — and its Randomise is visible but disabled, with a prompt to add something
+		// rather than a button that has quietly gone away.
+		.safeAreaInset(edge: .bottom) {
+			RandomiseBar(caption: randomiseCaption, isEnabled: !store.items.isEmpty) {
+				store.send(.randomiseButtonTapped)
+			}
+		}
 		.sheet(item: $store.scope(\.editor, action: \.editor)) { editorStore in
 			ItemEditorView(store: editorStore)
+		}
+		.sheet(item: $store.scope(\.randomise, action: \.randomise)) { randomiseStore in
+			RandomiseView(store: randomiseStore)
+		}
+	}
+
+	/// What sits under the button: `4 items`, or why it is dimmed.
+	///
+	/// Each variant is one catalogue entry rather than fragments joined in Swift — a join is
+	/// the one construction that cannot be translated (ADR-0022) — and the count is inflected,
+	/// because plain interpolation renders "1 items" on screen for everyone (ADR-0018). A
+	/// Deck's `Deck · N of M left` arrives with #22.
+	private var randomiseCaption: Text {
+		if store.items.isEmpty {
+			Text("Add an item to randomise", bundle: #bundle)
+		} else {
+			Text("^[\(store.items.count) items](inflect: true)", bundle: #bundle)
 		}
 	}
 

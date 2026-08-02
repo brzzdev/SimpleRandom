@@ -18,6 +18,7 @@ internal import Testing
 // initialisers are synthesised and so internal to the target that declares them.
 @testable internal import ListDetailFeature
 @testable internal import ListsFeature
+@testable internal import RandomiseFeature
 
 /// `ListDetail` — one List's Items (#20).
 ///
@@ -202,6 +203,39 @@ internal struct ListDetailTests {
 		#expect(store.editor == nil)
 	}
 
+	// `withRandomNumberGenerator` has no test value — it falls through to the live one and
+	// reports an issue — so a test that draws has to say which generator it draws from. The
+	// system one, deliberately: the pool below holds a single Item, so the pick is fixed
+	// whatever the sequence, and seeding a generator here would suggest the result depended on
+	// it. ``RandomiseFeatureTests`` is where the draw itself is under test.
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func theDetailIsWhatPresentsTheRandomiseSheet() async throws {
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		try await seed { db in
+			try db.seed {
+				lunch
+				pizza
+			}
+		}
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
+
+		// You open a List, then randomise it — there is no Randomise on an index row, which is
+		// why `ListsFeature` has no case for one to send (ADR-0016). The sheet is handed a scope
+		// and nothing else, and it has drawn its opening result by the time this returns.
+		//
+		// A one-item List makes that result predictable without the generator being seeded: it
+		// is the only Item there is.
+		store.send(.randomiseButtonTapped) {
+			$0.randomise = RandomiseFeature.State.DebugSnapshot(
+				drawToken: 1,
+				pool: [pizza],
+				result: pizza,
+				scope: .list(UUID(-1)),
+			)
+		}
+	}
+
 	@Test
 	internal func itemsSortByCreatedAtThenIDAndOnlyShowTheirOwnList() async throws {
 		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
@@ -243,7 +277,7 @@ internal struct ListDetailTests {
 		// lazy `_snapshotType`, which traps the moment the comparison reads it — so a
 		// `@FetchAll` in an expected state is supplied or it takes the test process down.
 		store.send(.rowTapped(summary)) {
-			$0.detail = ListDetail.State.DebugSnapshot(editor: nil, items: [], list: lunch)
+			$0.detail = ListDetail.State.DebugSnapshot(editor: nil, items: [], list: lunch, randomise: nil)
 		}
 
 		store.send(.detail(.newItemButtonTapped)) {
