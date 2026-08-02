@@ -173,11 +173,20 @@ let package = Package(
 				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
 				"ListDetailFeature",
 				"ListsFeature",
+				"RandomiseFeature",
 			],
 		),
+		// As the two above: `DependenciesTestSupport` carries the suite trait that hands each
+		// test case its own in-memory database, and `Database` is what builds one. The draw
+		// reads its pool through a real `@FetchAll`, so it needs a real database even though
+		// nothing here writes.
 		.testTarget(
 			name: "RandomiseFeatureTests",
-			dependencies: ["RandomiseFeature"],
+			dependencies: [
+				"Database",
+				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
+				"RandomiseFeature",
+			],
 		),
 	],
 )
