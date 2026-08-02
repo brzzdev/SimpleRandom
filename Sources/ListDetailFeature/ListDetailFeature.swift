@@ -85,8 +85,10 @@ public struct ListDetail {
 				break
 
 			case .randomiseButtonTapped:
-				// The scope is all the sheet is handed: it owns the pool and the pick from here,
-				// and it draws its opening result as it is built (ADR-0016).
+				// The scope is all the sheet is handed: it owns the pool and the pick from here
+				// (ADR-0016). The state is inert until `.ifLet` mounts it, which happens before
+				// this `send` returns — so the opening result is drawn, and `drawToken` moved,
+				// ahead of the sheet ever being presented.
 				state.randomise = RandomiseFeature.State(scope: .list(state.list.id))
 
 			case .rowTapped(let item):
