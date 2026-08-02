@@ -147,9 +147,15 @@ let package = Package(
 			name: "CombineFeatureTests",
 			dependencies: ["CombineFeature"],
 		),
+		// `DependenciesTestSupport` carries the suite trait that hands each test case its own
+		// in-memory database, and is the only link this target needs beyond `Database` itself:
+		// `Models` and `SQLiteData` arrive transitively, which is why they are not repeated.
 		.testTarget(
 			name: "DatabaseTests",
-			dependencies: ["Database"],
+			dependencies: [
+				"Database",
+				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
+			],
 		),
 		.testTarget(
 			name: "ListsFeatureTests",
