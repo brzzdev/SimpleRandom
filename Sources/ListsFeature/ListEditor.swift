@@ -70,11 +70,3 @@ public struct ListEditor {
 		}
 	}
 }
-
-extension String {
-	/// What goes in the `name` column: the user's text with the whitespace they did not mean
-	/// to type taken off either end.
-	internal var trimmedForStorage: String {
-		trimmingCharacters(in: .whitespacesAndNewlines)
-	}
-}
