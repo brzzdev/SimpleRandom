@@ -5,29 +5,45 @@
 
 public import SwiftUI
 
+extension View {
+	/// Pins the Randomise bar to the bottom of this screen.
+	///
+	/// The placement is part of the component rather than something each detail screen
+	/// remembers: pinned chrome, not a floating button, so it never covers the last row, never
+	/// dodges the keyboard, and never needs content padded around it. Both `ListDetail` and
+	/// `ComboDetail` render it, and a rule written only in prose is one the second of them can
+	/// honour differently.
+	public func randomiseBar(
+		caption: Text,
+		isEnabled: Bool,
+		action: @escaping () -> Void,
+	) -> some View {
+		safeAreaInset(edge: .bottom) {
+			RandomiseBar(caption: caption, isEnabled: isEnabled, action: action)
+		}
+	}
+}
+
 /// The pinned Randomise bar both detail screens render: a full-width prominent capsule with
-/// a caption beneath it, meant for `.safeAreaInset(edge: .bottom)`.
-///
-/// Pinned chrome rather than a floating button: it never covers the last row, never dodges
-/// the keyboard, and never needs content padded around it.
+/// a caption beneath it. Placed by ``SwiftUI/View/randomiseBar(caption:isEnabled:action:)``.
 ///
 /// The caption arrives already composed, as `Text`, because each variant is one whole
 /// catalogue entry and those entries belong to the screen that authors them — `N items` and
 /// `Add an item to randomise` on the Lists path, three distinct prompts on the Combine one
 /// (ADR-0022). This view owns the shape and the accessibility treatment, and no strings but
 /// its own.
-public struct RandomiseBar: View {
+internal struct RandomiseBar: View {
 	private let action: () -> Void
 	private let caption: Text
 	private let isEnabled: Bool
 
-	public init(caption: Text, isEnabled: Bool, action: @escaping () -> Void) {
+	internal init(caption: Text, isEnabled: Bool, action: @escaping () -> Void) {
 		self.action = action
 		self.caption = caption
 		self.isEnabled = isEnabled
 	}
 
-	public var body: some View {
+	internal var body: some View {
 		VStack(spacing: 8) {
 			Button(action: action) {
 				Text("Randomise", bundle: #bundle)

@@ -26,9 +26,9 @@ internal import Testing
 /// the Item `LCRNG(seed: 0)` happens to choose is a test of this generator's arithmetic; the
 /// claims worth making are that the result comes from the pool, that a one-item List always
 /// returns that Item, that a repeat is legal, and that a title appearing twice is drawn twice
-/// as often. Where a claim is about a distribution the pick cannot be predicted at all, so
-/// exhaustivity is off for exactly those cases and the property is read off the store
-/// afterwards.
+/// as often. Those claims are about many draws rather than one, so the pick cannot be
+/// predicted at all — hence ``nonExhaustively(_:)``, used for exactly those cases and nowhere
+/// else.
 ///
 /// Seeded rows carry **negative** ids, as ``DatabaseTests`` and ``ListsFeatureTests`` do:
 /// `inMemory()` registers a counting generator that mints `…0001` upwards, so a negative seed
@@ -120,12 +120,13 @@ internal struct RandomiseFeatureTests {
 		}
 
 		// What re-rolling promises: a result from the pool, every time, and a token that moves
-		// whether or not the result does.
-		reRolling { draw in
-			#expect(store.drawToken == draw)
-			#expect(store.result.map(pool.contains) == true)
-		} send: {
-			store.send(.againButtonTapped)
+		// whether or not the result does. The opening draw already moved it to 1.
+		nonExhaustively {
+			for draw in 2...20 {
+				store.send(.againButtonTapped)
+				#expect(store.drawToken == draw)
+				#expect(store.result.map(pool.contains) == true)
+			}
 		}
 	}
 
@@ -143,11 +144,12 @@ internal struct RandomiseFeatureTests {
 		// produce one.
 		var previous = store.result
 		var repeats = 0
-		reRolling(times: 40) { _ in
-			if store.result == previous { repeats += 1 }
-			previous = store.result
-		} send: {
-			store.send(.againButtonTapped)
+		nonExhaustively {
+			for _ in 1...40 {
+				store.send(.againButtonTapped)
+				if store.result == previous { repeats += 1 }
+				previous = store.result
+			}
 		}
 		#expect(repeats > 0)
 	}
@@ -163,10 +165,11 @@ internal struct RandomiseFeatureTests {
 
 		let draws = 600
 		var counts: [String: Int] = [:]
-		reRolling(times: draws) { _ in
-			counts[store.result?.title ?? "", default: 0] += 1
-		} send: {
-			store.send(.againButtonTapped)
+		nonExhaustively {
+			for _ in 1...draws {
+				store.send(.againButtonTapped)
+				counts[store.result?.title ?? "", default: 0] += 1
+			}
 		}
 
 		// Both bounds, generously: the claim is that Pizza is drawn about twice as often as
@@ -181,27 +184,16 @@ internal struct RandomiseFeatureTests {
 	}
 }
 
-// MARK: - Re-rolling
+// MARK: - Exhaustivity
 
 extension RandomiseFeatureTests {
-	/// Re-rolls `times` times, running `assert` after each with the token value that draw should
-	/// have reached.
+	/// Runs `body` with the store's exhaustive comparison off.
 	///
-	/// Exhaustivity is off inside, and only inside: the pick is the one thing these tests must
-	/// not write down, and an exhaustive `send` would demand exactly that. What the pick has to
-	/// satisfy is asserted afterwards instead, by reading the store.
-	private func reRolling(
-		times: Int = 19,
-		_ assert: (Int) -> Void,
-		send: () -> Void,
-	) {
-		TestExhaustivity.$current.withValue(.off) {
-			// The opening draw already moved the token to 1, so the first re-roll is draw 2.
-			for draw in 2...(times + 1) {
-				send()
-				assert(draw)
-			}
-		}
+	/// The pick is the one thing these tests must not write down, and an exhaustive `send`
+	/// would demand exactly that. What the pick has to satisfy is asserted afterwards instead,
+	/// by reading the store.
+	private func nonExhaustively(_ body: () -> Void) {
+		TestExhaustivity.$current.withValue(.off, operation: body)
 	}
 }
 
@@ -216,9 +208,9 @@ extension RandomiseFeatureTests {
 	/// Seeds `Lunch` with the given titles and hands back its Items in the pool's own order, so
 	/// a test can say "from the pool" without restating what the pool is.
 	///
-	/// The titles share a `createdAt`, which leaves the id tie-break to order them — and the
-	/// ids descend with the titles, so the order they are written in is the order they come
-	/// back in.
+	/// Read back rather than returned as written. The titles share a `createdAt`, so what
+	/// separates them is the id tie-break, and whether `UUID(-1)` collates before `UUID(-2)` is
+	/// SQLite's business rather than something a test should assert by assuming it.
 	@discardableResult
 	private func seedLunch(with titles: [String]) async throws -> [Item] {
 		try await database.write { db in

@@ -7,6 +7,7 @@ public import ComposableArchitecture2
 public import Models
 
 internal import Dependencies
+internal import IssueReporting
 internal import SQLiteData
 
 /// The randomise sheet, and the whole draw — the pool, the pick and the token the
@@ -60,8 +61,12 @@ public struct RandomiseFeature {
 			case .combo:
 				// #24 builds the pooled query — every Item of every member List, with membership
 				// deduplicated by `listID`. Until then a Combo has no way to present this sheet,
-				// and an empty pool is the honest placeholder: it disables **Again** and draws
+				// and an empty pool is the safe placeholder: it disables **Again** and draws
 				// nothing, rather than quietly drawing from the wrong scope.
+				//
+				// Reported rather than merely commented, because the failure is otherwise
+				// invisible — a blank sheet with a dead button looks like an empty List.
+				reportIssue("A Combo cannot be randomised yet — the pooled query arrives with #24.")
 				_pool = FetchAll(Item.none)
 
 			case .list(let listID):

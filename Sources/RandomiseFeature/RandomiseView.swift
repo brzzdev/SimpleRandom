@@ -44,20 +44,6 @@ public struct RandomiseView: View {
 		}
 	}
 
-	/// The drawn Item, and on the Lists path the entire content of the sheet.
-	private var result: some View {
-		// The user's own text, so `verbatim`. It wraps to four lines and only then scales, so a
-		// long title shrinks rather than truncates — and past `.accessibility3` the detent grows
-		// instead, which is what keeps `minimumScaleFactor` a safety net for one absurd Item
-		// rather than the thing holding the layout together (ADR-0018).
-		Text(verbatim: store.result?.title ?? "")
-			.font(.largeTitle)
-			.fontWeight(.bold)
-			.multilineTextAlignment(.center)
-			.lineLimit(4)
-			.minimumScaleFactor(0.5)
-	}
-
 	private var againButton: some View {
 		Button {
 			store.send(.againButtonTapped)
@@ -70,16 +56,6 @@ public struct RandomiseView: View {
 		.buttonBorderShape(.capsule)
 		.controlSize(.large)
 		.disabled(!store.canDrawAgain)
-	}
-
-	/// Fixed at `.medium`, and `.large` from the accessibility sizes up.
-	///
-	/// One detent rather than a range: the sheet is not resizable. The medium detent was only
-	/// ever checked to `.accessibility3` — past that a long title either overflows or scales
-	/// below half, and scaling down directly contradicts the setting the user just turned up
-	/// (ADR-0018).
-	private var detent: PresentationDetent {
-		dynamicTypeSize.isAccessibilitySize ? .large : .medium
 	}
 
 	/// Speaks the result, because nothing in SwiftUI announces changed `Text` inside a
@@ -96,5 +72,29 @@ public struct RandomiseView: View {
 		var announcement = AttributedString(title)
 		announcement.accessibilitySpeechAnnouncementPriority = .high
 		AccessibilityNotification.Announcement(announcement).post()
+	}
+
+	/// Fixed at `.medium`, and `.large` from the accessibility sizes up.
+	///
+	/// One detent rather than a range: the sheet is not resizable. The medium detent was only
+	/// ever checked to `.accessibility3` — past that a long title either overflows or scales
+	/// below half, and scaling down directly contradicts the setting the user just turned up
+	/// (ADR-0018).
+	private var detent: PresentationDetent {
+		dynamicTypeSize.isAccessibilitySize ? .large : .medium
+	}
+
+	/// The drawn Item, and on the Lists path the entire content of the sheet.
+	private var result: some View {
+		// The user's own text, so `verbatim`. It wraps to four lines and only then scales, so a
+		// long title shrinks rather than truncates — and past `.accessibility3` the detent grows
+		// instead, which is what keeps `minimumScaleFactor` a safety net for one absurd Item
+		// rather than the thing holding the layout together (ADR-0018).
+		Text(verbatim: store.result?.title ?? "")
+			.font(.largeTitle)
+			.fontWeight(.bold)
+			.multilineTextAlignment(.center)
+			.lineLimit(4)
+			.minimumScaleFactor(0.5)
 	}
 }
