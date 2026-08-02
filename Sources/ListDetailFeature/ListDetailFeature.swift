@@ -42,13 +42,15 @@ public struct ListDetailView: View {
 		self.store = store
 	}
 
+	/// Blank on purpose, the way the three tabs were blank when they were scaffolded.
+	///
+	/// The obvious placeholder — `ContentUnavailableView("No Items")`, which is the screen's
+	/// real empty state — would state something false on every List that has Items, since
+	/// nothing here reads them yet. A screen that says nothing is better than one that lies,
+	/// and the copy arrives with the Items in #20.
 	public var body: some View {
-		ContentUnavailableView {
-			Label { Text("No Items", bundle: #bundle) } icon: { Image(systemName: "text.badge.plus") }
-		} description: {
-			Text("Add the things you want to pick between.", bundle: #bundle)
-		}
-		.navigationTitle(Text(verbatim: store.list.name))
-		.navigationBarTitleDisplayMode(.inline)
+		Color.clear
+			.navigationTitle(Text(verbatim: store.list.name))
+			.navigationBarTitleDisplayMode(.inline)
 	}
 }
