@@ -25,13 +25,20 @@ internal import Synchronization
 /// and nothing short of a logical clock would.
 ///
 /// Nothing in Foundation, GRDB, SQLiteData or swift-dependencies mints a v7, so this is
-/// written out — but only the parts a v4 does not already give: `UUID()` supplies sixteen
+/// written out — but only the parts a v4 does not already give: `\.uuid` supplies sixteen
 /// random bytes, and the timestamp and the version nibble go over the top of them.
+///
+/// Both halves come through `@Dependency` rather than `UUID()` and `Date()`, so the one
+/// property this function exists for is assertable without a test that waits on the wall
+/// clock. `\.date` is already the app's clock seam, and `createdAt` is written through it.
 @DatabaseFunction("newID")
 nonisolated func uuidV7() -> UUID {
-	var bytes = withUnsafeBytes(of: UUID().uuid) { Array($0) }
+	@Dependency(\.date.now) var now
+	@Dependency(\.uuid) var uuid
 
-	let milliseconds = UInt64((Date().timeIntervalSince1970 * 1_000).rounded())
+	var bytes = withUnsafeBytes(of: uuid().uuid) { Array($0) }
+
+	let milliseconds = UInt64((now.timeIntervalSince1970 * 1_000).rounded())
 	for offset in 0 ..< 6 {
 		bytes[offset] = UInt8(truncatingIfNeeded: milliseconds >> (8 * (5 - UInt64(offset))))
 	}

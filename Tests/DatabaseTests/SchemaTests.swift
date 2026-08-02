@@ -47,13 +47,17 @@ extension DatabaseTests {
 			let columns = try await database.read { db in
 				try #sql(
 					"""
-					SELECT "name" FROM pragma_table_info(\(bind: shape.name)) ORDER BY "name"
+					SELECT "name", "type", "notnull", "dflt_value"
+					FROM pragma_table_info(\(bind: shape.name)) ORDER BY "name"
 					""",
-					as: String.self
+					as: ColumnDefinition.self
 				)
 				.fetchAll(db)
 			}
 
+			// The whole definition, not just the name: under an append-only schema a column's
+			// affinity, its nullability and its default are as permanent as its existence, and
+			// a missing `newID()` default would leave a table minting no ids at all.
 			#expect(columns == shape.columns)
 		}
 
@@ -147,7 +151,7 @@ extension DatabaseTests {
 /// One table's declared shape — the `CONTEXT.md` tables, written out so the migrator can be
 /// held to them.
 struct TableShape: Sendable {
-	let columns: [String]
+	let columns: [ColumnDefinition]
 	let foreignKeys: Set<ForeignKey>
 	let name: String
 	let primaryKeyColumn: String
@@ -155,7 +159,14 @@ struct TableShape: Sendable {
 	/// All six, in the order `sqlite_schema` lists them.
 	static let all: [Self] = [
 		Self(
-			columns: ["comboID", "createdAt", "id", "itemID", "position", "updatedAt"],
+			columns: [
+				.required("comboID"),
+				.required("createdAt"),
+				.required("id", default: "newID()"),
+				.required("itemID"),
+				.optional("position", "INTEGER"),
+				.optional("updatedAt"),
+			],
 			foreignKeys: [
 				ForeignKey(from: "comboID", table: "combos", onDelete: "CASCADE"),
 				ForeignKey(from: "itemID", table: "items", onDelete: "CASCADE"),
@@ -164,7 +175,15 @@ struct TableShape: Sendable {
 			primaryKeyColumn: "id",
 		),
 		Self(
-			columns: ["comboID", "createdAt", "deletedAt", "id", "listID", "position", "updatedAt"],
+			columns: [
+				.required("comboID"),
+				.required("createdAt"),
+				.optional("deletedAt"),
+				.required("id", default: "newID()"),
+				.required("listID"),
+				.optional("position", "INTEGER"),
+				.optional("updatedAt"),
+			],
 			foreignKeys: [
 				ForeignKey(from: "comboID", table: "combos", onDelete: "CASCADE"),
 				ForeignKey(from: "listID", table: "lists", onDelete: "CASCADE"),
@@ -173,13 +192,31 @@ struct TableShape: Sendable {
 			primaryKeyColumn: "id",
 		),
 		Self(
-			columns: ["createdAt", "deletedAt", "drawMode", "emoji", "id", "name", "position", "updatedAt"],
+			columns: [
+				.required("createdAt"),
+				.optional("deletedAt"),
+				.required("drawMode", default: "'independent'"),
+				.optional("emoji"),
+				.required("id", default: "newID()"),
+				.required("name"),
+				.optional("position", "INTEGER"),
+				.optional("updatedAt"),
+			],
 			foreignKeys: [],
 			name: "combos",
 			primaryKeyColumn: "id",
 		),
 		Self(
-			columns: ["createdAt", "deletedAt", "id", "listID", "position", "title", "updatedAt", "weight"],
+			columns: [
+				.required("createdAt"),
+				.optional("deletedAt"),
+				.required("id", default: "newID()"),
+				.required("listID"),
+				.optional("position", "INTEGER"),
+				.required("title"),
+				.optional("updatedAt"),
+				.optional("weight", "INTEGER"),
+			],
 			foreignKeys: [ForeignKey(from: "listID", table: "lists", onDelete: "CASCADE")],
 			name: "items",
 			primaryKeyColumn: "id",
@@ -189,7 +226,12 @@ struct TableShape: Sendable {
 		// only deletion here is Reshuffle, and a soft delete would break the arithmetic that
 		// decides whether a Deck is exhausted.
 		Self(
-			columns: ["createdAt", "itemID", "position", "updatedAt"],
+			columns: [
+				.required("createdAt"),
+				.required("itemID"),
+				.optional("position", "INTEGER"),
+				.optional("updatedAt"),
+			],
 			foreignKeys: [ForeignKey(from: "itemID", table: "items", onDelete: "CASCADE")],
 			name: "listDraws",
 			primaryKeyColumn: "itemID",
@@ -197,7 +239,16 @@ struct TableShape: Sendable {
 		// No foreign keys at all, which is what makes a List the one valid share root should
 		// `CKShare` ever arrive.
 		Self(
-			columns: ["createdAt", "deletedAt", "drawMode", "emoji", "id", "name", "position", "updatedAt"],
+			columns: [
+				.required("createdAt"),
+				.optional("deletedAt"),
+				.required("drawMode", default: "'independent'"),
+				.optional("emoji"),
+				.required("id", default: "newID()"),
+				.required("name"),
+				.optional("position", "INTEGER"),
+				.optional("updatedAt"),
+			],
 			foreignKeys: [],
 			name: "lists",
 			primaryKeyColumn: "id",
@@ -218,4 +269,29 @@ struct ForeignKey: Hashable, Sendable {
 struct PrimaryKeyColumn: Hashable, Sendable {
 	let name: String
 	let type: String
+}
+
+/// One column exactly as `pragma_table_info` reports it. Property order is that pragma's
+/// column order, not alphabetical: `#sql` decodes a `@Selection` positionally.
+@Selection
+struct ColumnDefinition: Hashable, Sendable {
+	let name: String
+	let type: String
+	let isNotNull: Bool
+	let defaultValue: String?
+}
+
+extension ColumnDefinition {
+	/// A column the domain requires a value for. `default:` is the SQL default expression as
+	/// SQLite echoes it back, and its absence is the assertion for `name` and `title`: a
+	/// `DEFAULT ''` would let an omitted one persist as a valid-looking empty string.
+	static func required(_ name: String, _ type: String = "TEXT", default: String? = nil) -> Self {
+		Self(name: name, type: type, isNotNull: true, defaultValue: `default`)
+	}
+
+	/// A column that may be `NULL` — in this schema, every reserved one (ADR-0003) and the
+	/// optional emoji.
+	static func optional(_ name: String, _ type: String = "TEXT") -> Self {
+		Self(name: name, type: type, isNotNull: false, defaultValue: nil)
+	}
 }

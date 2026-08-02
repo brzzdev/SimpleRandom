@@ -28,6 +28,12 @@ public var migrator: DatabaseMigrator {
 	// REPLACE` so that inserting a `NULL` id substitutes the default rather than failing.
 	// No `UNIQUE` appears outside a primary key, because two devices editing offline could
 	// never honour one (ADR-0004).
+	//
+	// `name` and `title` carry no default, unlike `drawMode`. `CONTEXT.md` calls both
+	// trimmed and non-empty, and a `DEFAULT ''` would let an omitted one persist as a
+	// valid-looking empty string on every device; without it the same mistake fails at the
+	// insert. `.independent` is a real domain default rather than a stand-in for a missing
+	// value, so it keeps its.
 	migrator.registerMigration("Create the v1 schema") { db in
 		try #sql(
 			"""
@@ -37,7 +43,7 @@ public var migrator: DatabaseMigrator {
 			  "deletedAt" TEXT,
 			  "drawMode" TEXT NOT NULL ON CONFLICT REPLACE DEFAULT 'independent',
 			  "emoji" TEXT,
-			  "name" TEXT NOT NULL ON CONFLICT REPLACE DEFAULT '',
+			  "name" TEXT NOT NULL,
 			  "position" INTEGER,
 			  "updatedAt" TEXT
 			) STRICT
@@ -53,7 +59,7 @@ public var migrator: DatabaseMigrator {
 			  "deletedAt" TEXT,
 			  "listID" TEXT NOT NULL REFERENCES "lists"("id") ON DELETE CASCADE,
 			  "position" INTEGER,
-			  "title" TEXT NOT NULL ON CONFLICT REPLACE DEFAULT '',
+			  "title" TEXT NOT NULL,
 			  "updatedAt" TEXT,
 			  "weight" INTEGER
 			) STRICT
@@ -91,7 +97,7 @@ public var migrator: DatabaseMigrator {
 			  "deletedAt" TEXT,
 			  "drawMode" TEXT NOT NULL ON CONFLICT REPLACE DEFAULT 'independent',
 			  "emoji" TEXT,
-			  "name" TEXT NOT NULL ON CONFLICT REPLACE DEFAULT '',
+			  "name" TEXT NOT NULL,
 			  "position" INTEGER,
 			  "updatedAt" TEXT
 			) STRICT
