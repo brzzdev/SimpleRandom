@@ -34,8 +34,9 @@ internal import Testing
 internal struct ListDetailTests {
 	@Test
 	internal func addingItemsKeepsThemInInsertionOrder() async throws {
-		try await seedList()
-		let store = TestStore(initialState: ListDetail.State(list: .lunch)) { ListDetail() }
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+		try await seed { db in try db.seed { lunch } }
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 		#expect(store.items.isEmpty)
 
 		// Three, because two would not tell insertion order from any order that happens to
@@ -54,16 +55,17 @@ internal struct ListDetailTests {
 
 	@Test
 	internal func addingAnItemTrimsItsTitleAndAcceptsADuplicate() async throws {
-		try await seedList()
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
 		try await seed { db in
 			try db.seed {
+				lunch
 				Item(id: UUID(-1), createdAt: .earlier, listID: UUID(-1), title: "Pizza")
 			}
 		}
-		let store = TestStore(initialState: ListDetail.State(list: .lunch)) { ListDetail() }
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 
 		store.send(.newItemButtonTapped) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: .blank)
+			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
 		}
 		store.modify {
 			$0.editor?.draft.title = "  Pizza  "
@@ -90,11 +92,12 @@ internal struct ListDetailTests {
 
 	@Test
 	internal func aWhitespaceOnlyTitleSavesNothing() async throws {
-		try await seedList()
-		let store = TestStore(initialState: ListDetail.State(list: .lunch)) { ListDetail() }
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+		try await seed { db in try db.seed { lunch } }
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 
 		store.send(.newItemButtonTapped) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: .blank)
+			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
 		}
 		store.modify {
 			$0.editor?.draft.title = "   "
@@ -103,7 +106,8 @@ internal struct ListDetailTests {
 		// A title is trimmed and non-empty, so there is nothing here to save. The Save button
 		// is disabled on the same rule, and this is the reducer refusing anyway — the button is
 		// a courtesy, not the enforcement.
-		#expect(!store.editor!.isSavable)
+		let editor = try #require(store.editor)
+		#expect(editor.isSavable == false)
 		await store.send(.editor(.saveButtonTapped))?.value
 
 		// The sheet stays up, holding what was typed, rather than dismissing on a save that did
@@ -114,11 +118,12 @@ internal struct ListDetailTests {
 
 	@Test
 	internal func aFailedSaveKeepsTheSheetUpAndTheDraftIntact() async throws {
-		try await seedList()
-		let store = TestStore(initialState: ListDetail.State(list: .lunch)) { ListDetail() }
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+		try await seed { db in try db.seed { lunch } }
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 
 		store.send(.newItemButtonTapped) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: .blank)
+			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
 		}
 		store.modify {
 			$0.editor?.draft.title = "Pizza"
@@ -140,14 +145,15 @@ internal struct ListDetailTests {
 
 	@Test
 	internal func editingAnItemKeepsItsIdentityAndItsPlace() async throws {
-		try await seedList()
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
 		try await seed { db in
 			try db.seed {
+				lunch
 				Item(id: UUID(-1), createdAt: .earlier, listID: UUID(-1), title: "Pizza")
 				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Ramen")
 			}
 		}
-		let store = TestStore(initialState: ListDetail.State(list: .lunch)) { ListDetail() }
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 		let pizza = try #require(store.items.first)
 
 		store.send(.rowTapped(pizza)) {
@@ -174,14 +180,15 @@ internal struct ListDetailTests {
 
 	@Test
 	internal func deletingAnItemDoesNotAskFirst() async throws {
-		try await seedList()
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
 		try await seed { db in
 			try db.seed {
+				lunch
 				Item(id: UUID(-1), createdAt: .earlier, listID: UUID(-1), title: "Pizza")
 				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Ramen")
 			}
 		}
-		let store = TestStore(initialState: ListDetail.State(list: .lunch)) { ListDetail() }
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 		let pizza = try #require(store.items.first)
 
 		// Straight out, with nothing raised in between: an Item is one line of text the user
@@ -197,9 +204,10 @@ internal struct ListDetailTests {
 
 	@Test
 	internal func itemsSortByCreatedAtThenIDAndOnlyShowTheirOwnList() async throws {
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
 		try await seed { db in
 			try db.seed {
-				Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+				lunch
 				Models.List(id: UUID(-2), createdAt: .seed, name: "Films")
 
 				// Seeded out of order in both keys. `Second` and `Third` share an instant, so
@@ -213,7 +221,7 @@ internal struct ListDetailTests {
 				Item(id: UUID(-4), createdAt: .earlier, listID: UUID(-2), title: "Heat")
 			}
 		}
-		let store = TestStore(initialState: ListDetail.State(list: .lunch)) { ListDetail() }
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 
 		// The other List's Item is older than all of these, so it would sort first if the
 		// query were not scoped: an Item belongs to exactly one List.
@@ -222,7 +230,8 @@ internal struct ListDetailTests {
 
 	@Test
 	internal func theIndexCaptionFollowsWhatTheDetailAddsAndDeletes() async throws {
-		try await seedList()
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+		try await seed { db in try db.seed { lunch } }
 		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
 		let summary = try #require(store.summaries.first)
 		#expect(summary.itemCount == 0)
@@ -234,11 +243,11 @@ internal struct ListDetailTests {
 		// lazy `_snapshotType`, which traps the moment the comparison reads it — so a
 		// `@FetchAll` in an expected state is supplied or it takes the test process down.
 		store.send(.rowTapped(summary)) {
-			$0.detail = ListDetail.State.DebugSnapshot(editor: nil, items: [], list: .lunch)
+			$0.detail = ListDetail.State.DebugSnapshot(editor: nil, items: [], list: lunch)
 		}
 
 		store.send(.detail(.newItemButtonTapped)) {
-			$0.detail?.editor = ItemEditor.State.DebugSnapshot(draft: .blank)
+			$0.detail?.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
 		}
 		store.modify {
 			$0.detail?.editor?.draft.title = "Pizza"
@@ -253,7 +262,7 @@ internal struct ListDetailTests {
 		store.expect {
 			$0.detail?.editor = nil
 			$0.detail?.items = [pizza]
-			$0.summaries = [ListSummary(dealtCount: 0, itemCount: 1, list: .lunch)]
+			$0.summaries = [ListSummary(dealtCount: 0, itemCount: 1, list: lunch)]
 		}
 
 		await store.send(.detail(.deleteSwiped(pizza)))?.value
@@ -281,7 +290,7 @@ extension ListDetailTests {
 	/// what order they come out in, is the claim of whichever test called it.
 	private func add(_ title: String, to store: TestStore<ListDetail>) async throws {
 		store.send(.newItemButtonTapped) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: .blank)
+			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
 		}
 		store.modify {
 			$0.editor?.draft.title = title
@@ -321,28 +330,7 @@ extension ListDetailTests {
 		try await database.write(write)
 	}
 
-	/// The one List almost every case here needs: `.lunch`, empty, already in the database.
-	private func seedList() async throws {
-		try await seed { db in
-			try db.seed { Models.List.lunch }
-		}
-	}
-
 	private func items() async throws -> [Item] {
 		try await database.read { db in try Item.all.order { ($0.createdAt, $0.id) }.fetchAll(db) }
 	}
-}
-
-extension Models.List {
-	/// The List these cases push the detail for. Held as a value rather than read back,
-	/// because `ListDetail.State` is built from a List the index already has in hand.
-	fileprivate static let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
-}
-
-extension Item.Draft {
-	/// What the `+` button puts in the sheet: empty, stamped, and attached to `.lunch`.
-	///
-	/// `createdAt` is stamped when the sheet opens rather than when it is saved, so it is
-	/// already the suite's frozen instant by the time the editor's state is asserted.
-	fileprivate static let blank = Item.Draft(createdAt: .seed, listID: UUID(-1), title: "")
 }

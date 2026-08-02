@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 
-public import Foundation
+// `internal`, not `public`: Foundation is what `trimmingCharacters(in:)` comes from, and it
+// appears nowhere in the signature below — a `public import` warns that it is unused in
+// public declarations.
+internal import Foundation
 
 extension String {
 	/// What goes in a `name` or a `title` column: the user's text with the whitespace they did
