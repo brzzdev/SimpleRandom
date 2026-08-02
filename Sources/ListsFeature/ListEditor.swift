@@ -36,6 +36,9 @@ public struct ListEditor {
 		case saveButtonTapped
 	}
 
+	/// The in-flight save, so a second tap can be told there is one.
+	@StoreTaskID var save
+
 	public init() {}
 
 	public var body: some Feature {
@@ -47,13 +50,21 @@ public struct ListEditor {
 			case .saveButtonTapped:
 				// The same rule the Save button is gated on, asked of the state rather than
 				// recomputed here, so the two cannot come to disagree.
-				guard state.isSavable else { return }
+				//
+				// And not a second time while the first write is still in flight. The draft's
+				// id is still `nil` until the sheet dismisses, so a second `upsert` inserts a
+				// second row rather than updating the first — and two Lists with one name is
+				// legal here, so it would land silently.
+				//
+				// Untested for the reason ``ItemEditor`` gives: a `TestStore` cannot stage the
+				// race, and the test that looks like it does passes without the guard.
+				guard state.isSavable, !save.isRunning else { return }
 				var edited = state.draft
 				edited.name = edited.name.trimmedForStorage
 				let draft = edited
 
 				@Dependency(\.defaultDatabase) var database
-				store.addTask {
+				store.addTask(id: save) {
 					// `withErrorReporting` reports the failure and returns `nil`. The sheet
 					// stays up when it does: dismissing would throw the draft away and leave
 					// the user believing it saved, which is the one outcome worse than the
