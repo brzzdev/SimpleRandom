@@ -157,9 +157,17 @@ let package = Package(
 				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
 			],
 		),
+		// As `DatabaseTests`: `DependenciesTestSupport` carries the suite trait that hands each
+		// test case its own in-memory database, and `Database` is what builds one. Everything
+		// else — `Models`, `SQLiteData`, ComposableArchitecture2 — arrives through
+		// `ListsFeature`.
 		.testTarget(
 			name: "ListsFeatureTests",
-			dependencies: ["ListsFeature"],
+			dependencies: [
+				"Database",
+				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
+				"ListsFeature",
+			],
 		),
 		.testTarget(
 			name: "RandomiseFeatureTests",
