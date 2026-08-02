@@ -234,6 +234,10 @@ Combine is one level deeper: `CombineFeature.State` → `ComboDetail.State` → 
 
 **The pool lives in `RandomiseFeature.State`**, as a `@FetchAll` whose query is built from the `DrawScope`, rather than being assembled inside the reducer at draw time and discarded. This is only **Seams**' read rule applied — but it is also what keeps the sheet's view holding every candidate, not just the winner, which is what any later animation over the pool would need. It is not free: in Deck mode the remaining pool shrinks on every draw, so `RandomiseFeatureTests`' exhaustive assertions carry that churn alongside the result.
 
+**The pick is a `mutating func` on `RandomiseFeature.State`, called from `onMount` for the opening result and from the reducer for a re-roll.** Both are the feature's own work with no client between it and the generator, and both run inside the store's dependency scope — a `State` is inert until mounted, so nothing draws at construction and a preview cannot silently pick from the live generator.
+
+**The opening draw lands before the sheet's view exists**, which is what keeps the acknowledgement to re-rolls. `.ifLet` mounts a child within the presenting `send` — the library drains its post-processing hooks before `send` returns — so `drawToken` is already `1` by the time SwiftUI presents. This is a guarantee about the library's mount ordering rather than about SwiftUI's, which is why it is written down here and pinned by a test that asserts the mounted child's state inside the parent's `send`.
+
 Its state also carries `drawToken`, an `Int` incremented on every draw and rendered by nothing. A re-roll that lands on the Item already shown changes no other state, so it is the only value the sheet's haptic and its VoiceOver announcement can trigger on — see **Accessibility**. It is not persisted; **Draw results are not persisted** is unchanged. Re-roll and Reshuffle are both buttons on the sheet, so the logic lives where the gestures land, and one test suite covers both tabs' deck arithmetic. Only the detail screens present it: you open a List, then randomise it.
 
 ### Seams
