@@ -29,12 +29,15 @@ public struct RandomiseFeature {
 		/// only value the sheet's haptic and its VoiceOver announcement can trigger on
 		/// (ADR-0017). Not persisted — nothing about a draw is.
 		///
-		/// The opening draw happens in ``init(scope:)``, so the token is already `1` by the time
-		/// the sheet's view exists and neither channel fires on presentation: announcing there
-		/// would talk over the result the user is being shown. The contract is the *reveal*
-		/// rather than the pick — in v1 they are the same instant, and anything that later
-		/// separates them moves this increment rather than leaving it where the name suggests
-		/// (ADR-0021).
+		/// The opening draw happens on mount, and `.ifLet` mounts a child inside the presenting
+		/// `send` — the library drains its post-processing hooks before `send` returns — so the
+		/// token is already `1` by the time SwiftUI presents the sheet. Neither channel fires on
+		/// presentation, because there is no change for the view to see: announcing there would
+		/// talk over the result the user is being shown.
+		///
+		/// The contract is the *reveal* rather than the pick — in v1 they are the same instant,
+		/// and anything that later separates them moves this increment rather than leaving it
+		/// where the name suggests (ADR-0021).
 		private(set) public var drawToken = 0
 
 		/// Every candidate in scope, not just the winner.
@@ -75,8 +78,6 @@ public struct RandomiseFeature {
 				// on every device, which is what a v2 animation over it would need.
 				_pool = FetchAll(Item.where { $0.listID.eq(listID) }.order { ($0.createdAt, $0.id) })
 			}
-			// The opening result, drawn before the sheet is presented. See ``drawToken``.
-			draw()
 		}
 
 		/// Picks uniformly from the pool and acknowledges it by moving ``drawToken``.
@@ -85,10 +86,10 @@ public struct RandomiseFeature {
 		/// nothing, and adding the same text twice is the user's own weighting mechanism
 		/// (ADR-0004). A one-item pool therefore always returns that Item.
 		///
-		/// Lives on `State` rather than in the reducer because the opening draw happens at
-		/// construction and a re-roll happens on an action, and the two must be the same pick.
-		/// It is still the feature's own logic rather than a client behind a seam, which is what
-		/// lets a test seed the generator and assert a real draw (ADR-0011).
+		/// Lives on `State` so that the opening draw and a re-roll are literally the same pick —
+		/// one arrives on mount, the other on an action, and both are the feature's own logic
+		/// rather than a client behind a seam, which is what lets a test seed the generator and
+		/// assert a real draw (ADR-0011).
 		internal mutating func draw() {
 			@Dependency(\.withRandomNumberGenerator) var withRandomNumberGenerator
 
@@ -118,6 +119,14 @@ public struct RandomiseFeature {
 				// twice in a row, and nothing suppresses it.
 				state.draw()
 			}
+		}
+		// The opening result. On mount rather than in `State.init` so that the pick is the
+		// feature's own work on both paths, and so that it runs inside the store's dependency
+		// scope — a `State` built in a preview would otherwise have drawn from the live
+		// generator at construction. `.ifLet` mounts a child within the presenting `send`, which
+		// is what keeps this ahead of the sheet's view. See ``State/drawToken``.
+		.onMount { state in
+			state.draw()
 		}
 	}
 }

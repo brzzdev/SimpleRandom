@@ -44,33 +44,42 @@ internal import Testing
 )
 internal struct RandomiseFeatureTests {
 	@Test
-	internal func theOpeningResultIsDrawnAsTheSheetIsBuilt() async throws {
+	internal func constructingTheStateDrawsNothing() async throws {
 		let pool = try await seedLunch(with: ["Pizza", "Ramen", "Tacos"])
+
+		// A `State` is inert until it is mounted. The pool is there — it is state rather than
+		// something assembled at draw time and discarded, in `(createdAt, id)` order, so the
+		// sheet holds every candidate and not just the winner (ADR-0021) — but the pick is the
+		// feature's work, and the feature has not run yet.
+		//
+		// This is what keeps the generator honest: a `State` built in a preview, or anywhere
+		// else outside a store's dependency scope, cannot quietly draw from the live one.
 		let state = RandomiseFeature.State(scope: .list(UUID(-1)))
-
-		// The pool is state rather than something assembled at draw time and discarded, in
-		// `(createdAt, id)` order — the sheet holds every candidate, not just the winner
-		// (ADR-0021).
 		#expect(state.pool == pool)
-
-		// Drawn before the sheet's view exists, which is what leaves the token already moved at
-		// presentation and so keeps the haptic and the announcement to re-rolls only (ADR-0017).
-		#expect(state.drawToken == 1)
-		#expect(try pool.contains(#require(state.result)))
-		#expect(state.canDrawAgain)
+		#expect(state.result == nil)
+		#expect(state.drawToken == 0)
 	}
 
 	@Test
-	internal func aOneItemListAlwaysDrawsThatItem() async throws {
+	internal func mountingDrawsTheOpeningResultAndAOneItemListAlwaysDrawsThatItem() async throws {
 		let pool = try await seedLunch(with: ["Pizza"])
 		let pizza = try #require(pool.first)
+		// Mounting draws the opening result, asserted through the initialiser's own `changes`
+		// closure because that is when it happens — the store has mounted the feature before it
+		// hands itself back. A one-item List randomises normally and always returns that Item —
+		// no minimum, and no special case in the reducer (ADR-0004) — which is what makes the
+		// pick here something a test may write down.
+		//
+		// ``ListDetailTests/theDetailIsWhatPresentsTheRandomiseSheet`` pins the half that matters
+		// more: that this lands inside the presenting `send`, and so before the sheet's view
+		// exists, which is what keeps the haptic and the announcement to re-rolls only
+		// (ADR-0017).
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(UUID(-1)))) {
 			RandomiseFeature()
+		} changes: {
+			$0.drawToken = 1
+			$0.result = pizza
 		}
-
-		// A one-item List randomises normally and always returns that Item — no minimum, and no
-		// special case in the reducer (ADR-0004).
-		#expect(store.result == pizza)
 
 		// **Again** is disabled here, where every draw is a repeat by definition and the haptic
 		// would be the only thing distinguishing a working button from a broken one (ADR-0017).
@@ -108,12 +117,15 @@ internal struct RandomiseFeatureTests {
 
 		// An empty List is legal — you have just made it — and the pinned bar is disabled, so
 		// this state is unreachable through the UI. It is asserted anyway because the alternative
-		// to returning nothing is trapping on an empty pool.
-		let state = RandomiseFeature.State(scope: .list(UUID(-1)))
-		#expect(state.pool.isEmpty)
-		#expect(state.result == nil)
-		#expect(state.drawToken == 0)
-		#expect(state.canDrawAgain == false)
+		// to returning nothing is trapping on an empty pool. Mounted, so the opening draw has
+		// had its chance and declined it.
+		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(UUID(-1)))) {
+			RandomiseFeature()
+		}
+		#expect(store.pool.isEmpty)
+		#expect(store.result == nil)
+		#expect(store.drawToken == 0)
+		#expect(store.canDrawAgain == false)
 	}
 
 	@Test
@@ -122,9 +134,9 @@ internal struct RandomiseFeatureTests {
 		var state = RandomiseFeature.State(scope: .list(UUID(-1)))
 
 		// What a draw promises, held over enough of them that a picker reaching outside the pool
-		// or a token that only moves when the result does would have to show itself. The opening
-		// draw already moved the token to 1, so the next is 2.
-		for draw in 2...20 {
+		// or a token that only moves when the result does would have to show itself. Unmounted,
+		// so this counts from the first draw rather than from the opening one.
+		for draw in 1...20 {
 			state.draw()
 			#expect(state.drawToken == draw)
 			#expect(state.result.map(pool.contains) == true)
