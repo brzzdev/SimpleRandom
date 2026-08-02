@@ -200,10 +200,11 @@ extension RandomiseFeatureTests {
 	/// Seeds `Lunch` with the given titles and hands back its Items in the pool's own order, so
 	/// a test can say "from the pool" without restating what the pool is.
 	///
-	/// Not the shared fixture ADR-0019 rules out. The thing that varies between these worlds is
-	/// the titles, and every caller states its own at the call site — `["Pizza", "Pizza",
-	/// "Ramen"]` is the whole subject of the duplicate-weighting test. What is hidden is only
-	/// the List and the ids, which no test here is about.
+	/// A builder rather than the shared fixture ADR-0019 rules out — the distinction that ADR
+	/// now draws explicitly. The thing that varies between these worlds is the titles, and every
+	/// caller states its own at the call site; `["Pizza", "Pizza", "Ramen"]` is the whole
+	/// subject of the duplicate-weighting test. Only the List and the ids are hidden, and no
+	/// test here is about those.
 	///
 	/// Read back rather than returned as written. The titles share a `createdAt`, so what
 	/// separates them is the id tie-break, and whether `UUID(-1)` collates before `UUID(-2)` is
