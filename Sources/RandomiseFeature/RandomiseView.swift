@@ -92,7 +92,7 @@ public struct RandomiseView: View {
 		// rather than the thing holding the layout together (ADR-0018).
 		Text(verbatim: store.result?.title ?? "")
 			.font(.largeTitle)
-			.fontWeight(.bold)
+			.bold()
 			.multilineTextAlignment(.center)
 			.lineLimit(4)
 			.minimumScaleFactor(0.5)

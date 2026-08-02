@@ -26,9 +26,13 @@ internal import Testing
 /// the Item `LCRNG(seed: 0)` happens to choose is a test of this generator's arithmetic; the
 /// claims worth making are that the result comes from the pool, that a one-item List always
 /// returns that Item, that a repeat is legal, and that a title appearing twice is drawn twice
-/// as often. Those claims are about many draws rather than one, so the pick cannot be
-/// predicted at all — hence ``nonExhaustively(_:)``, used for exactly those cases and nowhere
-/// else.
+/// as often.
+///
+/// Those last three are claims about *many* draws, and no single `send` can state the pick it
+/// is about to make. They are therefore asserted against ``RandomiseFeature/State/draw()``
+/// directly, which is where selection lives — rather than by turning a `TestStore`'s
+/// exhaustive comparison off, which ADR-0019 rules out and which would have bought a discount
+/// on a cost this app is not paying. Every `TestStore` here stays exhaustive.
 ///
 /// Seeded rows carry **negative** ids, as ``DatabaseTests`` and ``ListsFeatureTests`` do:
 /// `inMemory()` registers a counting generator that mints `…0001` upwards, so a negative seed
@@ -113,43 +117,36 @@ internal struct RandomiseFeatureTests {
 	}
 
 	@Test
-	internal func everyReRollComesFromThePoolAndMovesTheToken() async throws {
+	internal func everyDrawComesFromThePoolAndMovesTheToken() async throws {
 		let pool = try await seedLunch(with: ["Pizza", "Ramen", "Tacos"])
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(UUID(-1)))) {
-			RandomiseFeature()
-		}
+		var state = RandomiseFeature.State(scope: .list(UUID(-1)))
 
-		// What re-rolling promises: a result from the pool, every time, and a token that moves
-		// whether or not the result does. The opening draw already moved it to 1.
-		nonExhaustively {
-			for draw in 2...20 {
-				store.send(.againButtonTapped)
-				#expect(store.drawToken == draw)
-				#expect(store.result.map(pool.contains) == true)
-			}
+		// What a draw promises, held over enough of them that a picker reaching outside the pool
+		// or a token that only moves when the result does would have to show itself. The opening
+		// draw already moved the token to 1, so the next is 2.
+		for draw in 2...20 {
+			state.draw()
+			#expect(state.drawToken == draw)
+			#expect(state.result.map(pool.contains) == true)
 		}
 	}
 
 	@Test
 	internal func theSameItemTwiceInARowIsLegalAndNotSuppressed() async throws {
 		try await seedLunch(with: ["Pizza", "Ramen"])
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(UUID(-1)))) {
-			RandomiseFeature()
-		}
+		var state = RandomiseFeature.State(scope: .list(UUID(-1)))
 
 		// A plain List has no memory: repeats are not merely tolerated, they are the reason the
 		// sheet acknowledges a re-roll at all, since one landing on the Item already shown is
 		// otherwise indistinguishable from a dead button (ADR-0017). Over a coin flip's worth of
 		// draws a run of two is a near-certainty, and a suppressing implementation could never
 		// produce one.
-		var previous = store.result
+		var previous = state.result
 		var repeats = 0
-		nonExhaustively {
-			for _ in 1...40 {
-				store.send(.againButtonTapped)
-				if store.result == previous { repeats += 1 }
-				previous = store.result
-			}
+		for _ in 1...40 {
+			state.draw()
+			if state.result == previous { repeats += 1 }
+			previous = state.result
 		}
 		#expect(repeats > 0)
 	}
@@ -159,17 +156,13 @@ internal struct RandomiseFeatureTests {
 		// Repetition is the user's own weighting mechanism: selection is uniform over *Items*,
 		// nothing is deduplicated, and `weight` is reserved and read by nothing (ADR-0004).
 		try await seedLunch(with: ["Pizza", "Pizza", "Ramen"])
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(UUID(-1)))) {
-			RandomiseFeature()
-		}
+		var state = RandomiseFeature.State(scope: .list(UUID(-1)))
 
 		let draws = 600
 		var counts: [String: Int] = [:]
-		nonExhaustively {
-			for _ in 1...draws {
-				store.send(.againButtonTapped)
-				counts[store.result?.title ?? "", default: 0] += 1
-			}
+		for _ in 1...draws {
+			state.draw()
+			counts[state.result?.title ?? "", default: 0] += 1
 		}
 
 		// Both bounds, generously: the claim is that Pizza is drawn about twice as often as
@@ -184,19 +177,6 @@ internal struct RandomiseFeatureTests {
 	}
 }
 
-// MARK: - Exhaustivity
-
-extension RandomiseFeatureTests {
-	/// Runs `body` with the store's exhaustive comparison off.
-	///
-	/// The pick is the one thing these tests must not write down, and an exhaustive `send`
-	/// would demand exactly that. What the pick has to satisfy is asserted afterwards instead,
-	/// by reading the store.
-	private func nonExhaustively(_ body: () -> Void) {
-		TestExhaustivity.$current.withValue(.off, operation: body)
-	}
-}
-
 // MARK: - Reading and seeding
 
 extension RandomiseFeatureTests {
@@ -207,6 +187,11 @@ extension RandomiseFeatureTests {
 
 	/// Seeds `Lunch` with the given titles and hands back its Items in the pool's own order, so
 	/// a test can say "from the pool" without restating what the pool is.
+	///
+	/// Not the shared fixture ADR-0019 rules out. The thing that varies between these worlds is
+	/// the titles, and every caller states its own at the call site — `["Pizza", "Pizza",
+	/// "Ramen"]` is the whole subject of the duplicate-weighting test. What is hidden is only
+	/// the List and the ids, which no test here is about.
 	///
 	/// Read back rather than returned as written. The titles share a `createdAt`, so what
 	/// separates them is the id tie-break, and whether `UUID(-1)` collates before `UUID(-2)` is
