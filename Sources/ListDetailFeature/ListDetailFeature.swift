@@ -5,52 +5,82 @@
 
 public import ComposableArchitecture2
 public import Models
-public import SwiftUI
 
-/// `ListDetail` — one List's Items, its editor sheets and its pinned Randomise (#20).
-/// Both tabs push it, which is why it is a target of its own rather than part of the Lists
-/// index (ADR-0014).
+internal import Dependencies
+internal import IssueReporting
+internal import SQLiteData
+
+/// `ListDetail` — one List's Items, and the gestures that add, edit and delete them (#20).
 ///
-/// **What is here is the seam, not the screen.** #19 wires the Lists index to push this as
-/// optional child state (ADR-0013), so the state and the destination have to exist; the
-/// Items, the editors and the draw are #20's, and until then the screen says so.
+/// Both tabs push it, which is why it is a target of its own rather than part of the Lists
+/// index: a Combo's member row pushes the *real* List detail, and the screen cannot live
+/// inside `ListsFeature` without `CombineFeature` importing the whole index to reach it
+/// (ADR-0014).
+///
+/// The pinned Randomise bar is not here yet — it arrives with the draw in #21.
 @Feature
 public struct ListDetail {
 	public struct State: Identifiable {
+		public var editor: ItemEditor.State?
+		@FetchAll internal var items: [Item]
 		public let list: Models.List
 
 		public var id: Models.List.ID { list.id }
 
 		public init(list: Models.List) {
 			self.list = list
+			// Built here rather than declared on the property the way the index's is, because
+			// the query is per-List and the id only exists once there is a List to read it
+			// from.
+			//
+			// `(createdAt, id)` ascending is the app's one sort order. `createdAt` alone is not
+			// a total order — two devices creating rows offline in the same second leave SQLite
+			// to break the tie however it likes — and the primary key tie-break is arbitrary
+			// but identical on every device.
+			_items = FetchAll(Item.where { $0.listID.eq(list.id) }.order { ($0.createdAt, $0.id) })
 		}
 	}
 
-	public enum Action {}
+	public enum Action {
+		case deleteSwiped(Item)
+		case editor(ItemEditor.Action)
+		case newItemButtonTapped
+		case rowTapped(Item)
+	}
 
 	public init() {}
 
 	public var body: some Feature {
-		EmptyFeature()
-	}
-}
+		Update { state, action in
+			switch action {
+			case .deleteSwiped(let item):
+				// No confirmation. An Item is one line of text the user can retype, unlike a
+				// List, which takes its Items with it.
+				@Dependency(\.defaultDatabase) var database
+				store.addTask {
+					await withErrorReporting {
+						try await database.write { db in
+							try Item.find(item.id).delete().execute(db)
+						}
+					}
+				}
 
-public struct ListDetailView: View {
-	private let store: StoreOf<ListDetail>
+			case .editor:
+				break
 
-	public init(store: StoreOf<ListDetail>) {
-		self.store = store
-	}
+			case .newItemButtonTapped:
+				@Dependency(\.date.now) var now
+				// Stamped when the sheet opens rather than when it is saved, as the List editor
+				// does it: `createdAt` is the sort key, so an Item's place in the List is the
+				// moment you started typing it.
+				state.editor = ItemEditor.State(
+					draft: Item.Draft(createdAt: now, listID: state.list.id, title: ""),
+				)
 
-	/// Blank on purpose, the way the three tabs were blank when they were scaffolded.
-	///
-	/// The obvious placeholder — `ContentUnavailableView("No Items")`, which is the screen's
-	/// real empty state — would state something false on every List that has Items, since
-	/// nothing here reads them yet. A screen that says nothing is better than one that lies,
-	/// and the copy arrives with the Items in #20.
-	public var body: some View {
-		Color.clear
-			.navigationTitle(Text(verbatim: store.list.name))
-			.navigationBarTitleDisplayMode(.inline)
+			case .rowTapped(let item):
+				state.editor = ItemEditor.State(draft: Item.Draft(item))
+			}
+		}
+		.ifLet(\.editor, action: \.editor) { ItemEditor() }
 	}
 }

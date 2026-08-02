@@ -195,7 +195,7 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 
 | Target | Depends on | Holds |
 | --- | --- | --- |
-| `Models` | SQLiteData | The `@Table` types — `List`, `Item`, `ListDraw`, `Combo`, `ComboList`, `ComboDraw` — plus `DrawMode`, `DrawScope` and `Theme` |
+| `Models` | SQLiteData | The `@Table` types — `List`, `Item`, `ListDraw`, `Combo`, `ComboList`, `ComboDraw` — plus `DrawMode`, `DrawScope`, `Theme` and `String.trimmedForStorage`, the trimming both editors enforce |
 | `Database` | `Models`, SQLiteData | `migrator`, `appDatabase()`, `inMemory()`, the `SyncEngine` factory and its `SyncEngineDelegate` |
 | `Preferences` | `Models` | The two `@Shared(.appStorage)` keys: `theme` and `hasCompletedFirstFetch` |
 | `Acknowledgements` | ComposableArchitecture2 | `Licenses.generated.swift`, the licence list and the licence detail screen |
@@ -222,7 +222,9 @@ Features are `@Feature` types with `@ValueObservable` state; the 1.x vocabulary 
 
 `AppFeature.State` holds `var currentTab: Tab = .lists` as plain state — the app always opens on Lists — alongside the three tab features, scoped in `Features { }` under `TabView(selection: $store.currentTab)`.
 
-`ListsFeature.State` holds `@FetchAll var lists` and `var detail: ListDetail.State?`, wired with `.ifLet` and pushed with `.navigationDestination(item:)`; `ListDetail.State` holds `@FetchAll var items` and `var randomise: RandomiseFeature.State?`, presented with `.sheet(item:)`. The push and the sheet are therefore the same idiom — optional child state — rather than a `[Path.State]` stack.
+`ListsFeature.State` holds `@FetchAll var lists` and `var detail: ListDetail.State?`, wired with `.ifLet` and pushed with `.navigationDestination(item:)`; `ListDetail.State` holds `@FetchAll var items`, `var editor: ItemEditor.State?` and `var randomise: RandomiseFeature.State?`, both presented with `.sheet(item:)`. The push and the sheets are therefore the same idiom — optional child state — rather than a `[Path.State]` stack.
+
+`ListDetail`'s `@FetchAll` is built in `State.init` rather than declared on the property the way the indexes' are: its query is scoped to one List, and the id only exists once there is a List to read it from.
 
 Combine is one level deeper: `CombineFeature.State` → `ComboDetail.State` → `ListDetail.State`, because a Combo's member row pushes that member's List detail. Optional child state still carries it — the third level is another `.navigationDestination(item:)` off `ComboDetail` — so the idiom is unchanged and no `[Path.State]` stack is introduced.
 

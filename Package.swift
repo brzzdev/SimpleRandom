@@ -161,11 +161,17 @@ let package = Package(
 		// test case its own in-memory database, and `Database` is what builds one. Everything
 		// else — `Models`, `SQLiteData`, ComposableArchitecture2 — arrives through
 		// `ListsFeature`.
+		//
+		// `ListDetailFeature` arrives that way too, but is named anyway: this target is where
+		// `ListDetail`'s behaviour is exercised (ADR-0019), and it `@testable`-imports it for
+		// the `DebugSnapshot` types. A dependency a test target imports directly is one it
+		// should declare.
 		.testTarget(
 			name: "ListsFeatureTests",
 			dependencies: [
 				"Database",
 				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
+				"ListDetailFeature",
 				"ListsFeature",
 			],
 		),
