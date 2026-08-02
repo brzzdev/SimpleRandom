@@ -45,18 +45,25 @@ public struct ListEditor {
 				store.addTask { try store.dismiss() }
 
 			case .saveButtonTapped:
+				// The same rule the Save button is gated on, asked of the state rather than
+				// recomputed here, so the two cannot come to disagree.
+				guard state.isSavable else { return }
 				var edited = state.draft
 				edited.name = edited.name.trimmedForStorage
-				guard !edited.name.isEmpty else { return }
 				let draft = edited
 
 				@Dependency(\.defaultDatabase) var database
 				store.addTask {
-					await withErrorReporting {
+					// `withErrorReporting` reports the failure and returns `nil`. The sheet
+					// stays up when it does: dismissing would throw the draft away and leave
+					// the user believing it saved, which is the one outcome worse than the
+					// write failing.
+					let saved = await withErrorReporting {
 						try await database.write { db in
 							try Models.List.upsert { draft }.execute(db)
 						}
 					}
+					guard saved != nil else { return }
 					try store.dismiss()
 				}
 			}

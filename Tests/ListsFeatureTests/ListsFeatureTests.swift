@@ -8,6 +8,7 @@ internal import Database
 internal import Dependencies
 internal import DependenciesTestSupport
 internal import Foundation
+internal import IssueReporting
 internal import Models
 internal import SQLiteData
 internal import Testing
@@ -115,6 +116,58 @@ internal struct ListsFeatureTests {
 				.seeded(id: created.id, name: "Lunch"),
 			]
 		}
+	}
+
+	@Test
+	internal func aWhitespaceOnlyNameSavesNothing() async throws {
+		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
+
+		store.send(.newListButtonTapped) {
+			$0.destination = .editor(
+				ListEditor.State.DebugSnapshot(draft: Models.List.Draft(createdAt: .seed, name: ""))
+			)
+		}
+		store.modify {
+			$0.destination.modify(\.editor) { $0.draft.name = "   " }
+		}
+
+		// A name is trimmed and non-empty, so there is nothing here to save. The Save button
+		// is disabled on the same rule, and this is the reducer refusing anyway — the button
+		// is a courtesy, not the enforcement.
+		#expect(!store.destination!.editor!.isSavable)
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
+
+		// The sheet stays up, holding what was typed, rather than dismissing on a save that
+		// did not happen.
+		#expect(try await lists().isEmpty)
+		#expect(store.destination?.editor != nil)
+	}
+
+	@Test
+	internal func aFailedSaveKeepsTheSheetUpAndTheDraftIntact() async throws {
+		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
+
+		store.send(.newListButtonTapped) {
+			$0.destination = .editor(
+				ListEditor.State.DebugSnapshot(draft: Models.List.Draft(createdAt: .seed, name: ""))
+			)
+		}
+		store.modify {
+			$0.destination.modify(\.editor) { $0.draft.name = "Lunch" }
+		}
+
+		// The bluntest write failure available through the public API, and the only part of
+		// this that is contrived: what is under test is what the editor does when the write
+		// throws, not the particular reason it threw.
+		try await database.write { db in try #sql("DROP TABLE lists").execute(db) }
+
+		await withExpectedIssue {
+			await store.send(.destination(.editor(.saveButtonTapped)))?.value
+		}
+
+		// Dismissing here would throw the draft away and leave the user believing it saved,
+		// which is the one outcome worse than the write failing.
+		#expect(store.destination?.editor?.draft.name == "Lunch")
 	}
 
 	@Test
