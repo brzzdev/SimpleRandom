@@ -40,6 +40,12 @@ internal struct ListsIndex: View {
 						caption: summary.caption,
 						accessibilityLabel: summary.accessibilityLabel,
 					)
+					// `.plain` hit-tests the label's drawn content, so without this the tap
+					// target is the glyphs and a short name leaves most of the row dead. On the
+					// label rather than the `Button`, since the label is what the style tests;
+					// at the call site rather than inside `IndexRow`, since being tappable is
+					// the caller's decision and not every index will want it.
+					.contentShape(.rect)
 				}
 				.buttonStyle(.plain)
 				.swipeActions(edge: .leading) {
