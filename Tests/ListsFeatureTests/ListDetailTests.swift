@@ -346,6 +346,28 @@ extension ListDetailTests {
 	}
 
 	@Test
+	internal func aPlainListShowsNothingAsDealtEvenWithRowsLeftFromADeck() async throws {
+		let plain = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+		try await seed { db in
+			try db.seed {
+				plain
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Ramen")
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+			}
+		}
+		let store = TestStore(initialState: ListDetail.State(list: plain)) { ListDetail() }
+
+		// The rows are still there — switching a Deck back to plain preserves them, so that
+		// switching back resumes where it left off — and the screen says nothing about them.
+		// A plain List draws over everything with no memory, so a checkmark and a spoken
+		// `Dealt` would describe a state it is not in, next to a caption reading `2 items`.
+		#expect(store.draws.map(\.itemID) == [UUID(-1)])
+		#expect(store.dealtItemIDs.isEmpty)
+		#expect(store.isExhausted == false)
+	}
+
+	@Test
 	internal func aDeckIsExhaustedOnlyWhenItHasItemsAndHasDealtThemAll() async throws {
 		let deck = Models.List(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Lunch")
 		try await seed { db in try db.seed { deck } }

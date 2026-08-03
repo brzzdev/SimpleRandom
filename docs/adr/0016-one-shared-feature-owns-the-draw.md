@@ -4,6 +4,8 @@
 
 Re-roll and Reshuffle are both buttons on the sheet, so the logic follows the gestures — and one test suite covers both tabs' deck arithmetic instead of the same arithmetic being implemented and tested twice.
 
+**Reshuffle is the one gesture that also lives elsewhere.** A Deck's detail screen carries a Reshuffle of its own — in the pinned button once the Deck is spent, and in a toolbar item at any point before that — because "available at any time" is otherwise unreachable from a sheet you can only enter by drawing. Those buttons issue the delete themselves rather than routing it through `RandomiseFeature`, because ADR-0011 puts every write at the gesture that causes it and there is no client in between. What is shared is the statement, `ListDraw.inList(_:)` in `Models`, so the *definition* of what Reshuffle removes has one home even though two features send it. The arithmetic this ADR was protecting — the pool, the pick, exhaustion — is still implemented once.
+
 **Only the detail screens present it.** `randomise: RandomiseFeature.State?` hangs off `ListDetail` and `ComboDetail`; there is no Randomise button on an index row. You open a List, then randomise it — the screen you are on is unambiguously the thing being drawn from, and Reshuffle sits next to the Items it acts on.
 
 ## Consequences

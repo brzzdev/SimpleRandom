@@ -169,11 +169,14 @@ public struct RandomiseFeature {
 
 	public enum Action {
 		case againButtonTapped
-		/// The deck is back, so deal from it. Sent by ``reshuffle(_:)`` once the delete has
-		/// landed and the pool has been refilled — never by the view.
+		/// The deck is back, so deal from it. Sent by ``reshuffleAndDeal(_:)`` once the delete
+		/// has landed and the pool has been refilled — never by the view.
 		case deckReshuffled
 		case reshuffleButtonTapped
 	}
+
+	/// The in-flight reshuffle, so a second tap can be told there is one.
+	@StoreTaskID var reshuffle
 
 	public init() {}
 
@@ -188,7 +191,7 @@ public struct RandomiseFeature {
 				deal(state)
 
 			case .reshuffleButtonTapped:
-				reshuffle(state)
+				reshuffleAndDeal(state)
 			}
 		}
 		// The opening result. On mount rather than in `State.init` so that the pick is the
@@ -242,17 +245,26 @@ public struct RandomiseFeature {
 	/// Not gated on exhaustion: Reshuffle is available at any time, and this is the same work
 	/// whether the deck is spent or barely touched. It deals afterwards because the button
 	/// sits where **Again** was, and a button in that position produces a result.
-	private func reshuffle(_ state: State) {
+	private func reshuffleAndDeal(_ state: State) {
 		// As in ``deal(_:)``: a Combo reshuffles its own `ComboDraw` rows, and those arrive
 		// with #24.
 		guard case .list(let list) = state.scope else { return }
+		// And not a second time while the first is still in flight. Each tap would otherwise
+		// put the deck back and deal from it independently, so two would deal twice — the
+		// second landing on a card the user never asked for, or, on a one-card deck, straight
+		// back on "That's the whole deck" a moment after the card appeared.
+		//
+		// Deliberately untested, for the reason ``ItemEditor`` gives about its own guard: a
+		// `TestStore` runs the first effect to completion before it delivers the second action,
+		// so a test written against this passes with the guard removed.
+		guard !reshuffle.isRunning else { return }
 
 		@Dependency(\.defaultDatabase) var database
 		// The id rather than the record: the task outlives this call, and the rest of the List
 		// is not its business.
 		let listID = list.id
 		let pool = state.$pool
-		store.addTask {
+		store.addTask(id: reshuffle) {
 			let reshuffled = await withErrorReporting {
 				try await database.write { db in
 					try ListDraw.inList(listID).delete().execute(db)

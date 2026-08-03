@@ -37,8 +37,16 @@ public struct ListDetail {
 
 		public var id: Models.List.ID { list.id }
 
-		/// The Items with a draw row, which render secondary with a trailing checkmark.
-		public var dealtItemIDs: Set<Item.ID> { Set(draws.map(\.itemID)) }
+		/// The Items this screen shows as dealt — secondary, with a trailing checkmark.
+		///
+		/// Empty for a plain List even when rows survive from a Deck it used to be. Those rows
+		/// are kept so that switching back resumes where it left off, but a plain List draws
+		/// over everything with no memory, so marking Items dealt would describe a state it is
+		/// not in — and the caption beneath, `4 items`, would be saying the opposite.
+		public var dealtItemIDs: Set<Item.ID> {
+			guard isDeck else { return [] }
+			return Set(draws.map(\.itemID))
+		}
 
 		public var isDeck: Bool { list.drawMode == .deck }
 
