@@ -223,6 +223,46 @@ extension RandomiseFeatureTests {
 	}
 
 	@Test
+	internal func computingTheWinnerDealsNothingOnItsOwn() async throws {
+		let (deck, _) = try await seedLunch(.deck, with: ["Pizza", "Ramen", "Tacos"])
+		var state = RandomiseFeature.State(scope: .list(deck))
+
+		// The pick and the deal are separate: `draw()` chooses a winner and nothing else, and
+		// the row is written where the result becomes *visible*, by the feature. In v1 the two
+		// are the same instant, so only this can tell them apart — and it is the constraint a
+		// v2 reveal animation depends on, because a row written at the tap spends a card the
+		// user never saw when the sheet is dragged away mid-animation (ADR-0021).
+		state.draw()
+		#expect(state.result?.item != nil)
+		#expect(try await draws().isEmpty)
+	}
+
+	@Test
+	internal func aDeckNeverDealsTheCardItIsShowing() async throws {
+		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza", "Ramen"])
+		var state = RandomiseFeature.State(scope: .list(deck))
+
+		// Unmounted, so nothing records these draws and the pool never shrinks: this is exactly
+		// the state a re-roll meets when it arrives before the row the last deal is writing has
+		// landed. The deck's own rule holds against it — the card on screen has been dealt,
+		// whatever the pool still says — so the second draw is the other card rather than the
+		// one already on screen.
+		//
+		// One card deep, which is one deal deep, which is as stale as the pool can be: a draw
+		// starts the write that removes its own card, and the draw after it is the only one
+		// that can arrive before that write lands.
+		state.draw()
+		let first = try #require(state.result?.item)
+		state.draw()
+		let second = try #require(state.result?.item)
+
+		#expect(state.pool == pool)
+		#expect(first != second)
+		#expect(Set([first, second]) == Set(pool))
+		#expect(state.drawToken == 2)
+	}
+
+	@Test
 	internal func dealingAnItemWritesItsRowAndTakesItOutOfThePool() async throws {
 		let (deck, pool) = try await seedLunch(
 			.deck,
@@ -302,6 +342,65 @@ extension RandomiseFeatureTests {
 		#expect(store.pool == pool.filter { $0.id != dealt.id })
 		// One row, for the card just dealt: Reshuffle put both of the old ones back.
 		#expect(try await draws() == [dealt.id])
+	}
+
+	@Test
+	internal func dealingRightThroughADeckProducesEveryCardExactlyOnce() async throws {
+		// Four cards, two of them sharing a title: a Deck deals Items rather than titles, so
+		// "Pizza" twice is two cards and comes out twice. That is what makes this a claim
+		// about a multiset rather than a set — the same reason repetition is the user's own
+		// weighting mechanism on the plain path (ADR-0004).
+		let titles = ["Pizza", "Pizza", "Ramen", "Tacos"]
+		let (deck, pool) = try await seedLunch(.deck, with: titles, dealing: titles)
+
+		// Seeded spent, so that the one draw a test cannot state — the opening one, which
+		// happens synchronously at mount — is the one draw whose outcome is not a pick.
+		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+			RandomiseFeature()
+		} changes: {
+			$0.drawToken = 1
+			$0.result = .exhausted
+		}
+
+		// Reshuffle puts the whole deck back and deals the first card of the run.
+		await store.send(.reshuffleButtonTapped)?.value
+		await store.receive(\.deckReshuffled, timeout: .seconds(1)) {
+			$0.drawToken = 2
+			$0.result = store.result
+			$0.pool = pool
+		}
+		var dealt = [try #require(store.result?.item)]
+
+		// Then right through to the last card. Which card each draw lands on is the generator's
+		// business, and so is whether the row that removes it has landed by the time the store
+		// is asked — both are read from it rather than written down. The claims are the two
+		// underneath: no card comes out twice, and the pool is always the deck minus what has
+		// been dealt.
+		for draw in 2...pool.count {
+			store.send(.againButtonTapped) {
+				$0.drawToken = draw + 1
+				$0.result = store.result
+				$0.pool = store.pool
+			}
+			let card = try #require(store.result?.item)
+			#expect(!dealt.contains(card))
+			dealt.append(card)
+
+			try await settle(store)
+			#expect(store.pool == pool.filter { !dealt.contains($0) })
+		}
+
+		#expect(dealt.count == pool.count)
+		#expect(Set(dealt) == Set(pool))
+		#expect(dealt.map(\.title).sorted() == titles.sorted())
+		#expect(try await Set(draws()) == Set(pool.map(\.id)))
+
+		// And exhaustion lands on the draw after the last card — N + 1, never N.
+		store.send(.againButtonTapped) {
+			$0.drawToken = pool.count + 2
+			$0.result = .exhausted
+			$0.pool = []
+		}
 	}
 
 	@Test
@@ -398,15 +497,6 @@ extension RandomiseFeatureTests {
 	private func settle(_ store: TestStore<RandomiseFeature>) async throws {
 		try await database.write { _ in }
 		try await store.state.$pool.load()
-	}
-}
-
-extension RandomiseFeature.State.Result {
-	/// The Item this result is showing, if it is showing one. Written here rather than on the
-	/// model because only these assertions want it — the sheet switches over both cases.
-	internal var item: Item? {
-		guard case .item(let item) = self else { return nil }
-		return item
 	}
 }
 

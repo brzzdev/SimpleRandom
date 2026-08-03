@@ -507,12 +507,12 @@ extension ListDetailTests {
 		try await database.write(write)
 	}
 
-	private func items() async throws -> [Item] {
-		try await database.read { db in try Item.all.order { ($0.createdAt, $0.id) }.fetchAll(db) }
-	}
-
 	/// Every draw row in the database, whichever List's Item it belongs to.
 	private func draws() async throws -> [ListDraw] {
 		try await database.read { db in try ListDraw.all.order(by: \.itemID).fetchAll(db) }
+	}
+
+	private func items() async throws -> [Item] {
+		try await database.read { db in try Item.all.order { ($0.createdAt, $0.id) }.fetchAll(db) }
 	}
 }

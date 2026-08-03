@@ -32,6 +32,13 @@ public struct RandomiseFeature {
 		public enum Result: Hashable, Sendable {
 			case exhausted
 			case item(Item)
+
+			/// The Item this is showing, if it is showing one. The sheet's own view switches
+			/// over both cases; this is for the places that only care about the one.
+			public var item: Item? {
+				guard case .item(let item) = self else { return nil }
+				return item
+			}
 		}
 
 		/// Incremented on every draw and rendered by nothing.
@@ -127,7 +134,17 @@ public struct RandomiseFeature {
 
 			// Lifted out of the closure: `pool` is a property of an `inout self` here, and the
 			// generator's closure is `@Sendable`.
-			let candidates = pool
+			//
+			// A Deck never deals the card it is showing. Its pool is a live query and the row
+			// that takes the dealt Item out of it is written from a task, so a re-roll that
+			// arrives before that lands would otherwise see a card the deck has already spent —
+			// and deal it a second time. The rule is the deck's own, applied to the state that
+			// has not caught up with it yet.
+			let candidates =
+				switch scope.drawMode {
+				case .deck: pool.filter { $0.id != result?.item?.id }
+				case .independent: pool
+				}
 			guard let drawn = withRandomNumberGenerator({ generator in
 				candidates.randomElement(using: &generator)
 			}) else {
