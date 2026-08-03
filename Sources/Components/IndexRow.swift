@@ -25,7 +25,12 @@ public struct IndexRow: View {
 	}
 
 	public var body: some View {
-		HStack(alignment: .firstTextBaseline, spacing: 12) {
+		// Centred, not `.firstTextBaseline`: baseline alignment sits the emoji against the
+		// name alone, which leaves it high by half the caption's height on every ordinary
+		// row. The cost is that a name long enough to wrap under Dynamic Type centres the
+		// emoji against the middle of the block rather than its first line — the rarer case,
+		// traded for the misalignment that was on all of them.
+		HStack(spacing: 12) {
 			Text(verbatim: emoji ?? "🎲")
 				.font(.title2)
 				// The placeholder is dimmed rather than absent so every row's name starts in
