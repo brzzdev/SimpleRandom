@@ -238,6 +238,50 @@ internal struct ListDetailTests {
 		}
 	}
 
+	// The same generator note as ``theDetailIsWhatPresentsTheRandomiseSheet``: a one-item pool
+	// makes the pick fixed whatever the sequence, so the system generator says the result does
+	// not depend on it.
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func onlyOneOfTheDetailsSheetsCanBeUpAtATime() async throws {
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		try await seed { db in
+			try db.seed {
+				lunch
+				pizza
+			}
+		}
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
+
+		store.send(.rowTapped(pizza)) {
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza)))
+		}
+
+		// Randomising *replaces* the editor rather than joining it. One optional holding two
+		// cases is what makes that structural: before it, two independent optionals could both
+		// be non-`nil` and nothing but the layout said otherwise — the randomise sheet covers
+		// the bar that opens it and the editor covers the rows that open it, neither of which
+		// is a guarantee.
+		store.send(.randomiseButtonTapped) {
+			$0.destination = .randomise(
+				RandomiseFeature.State.DebugSnapshot(
+					drawToken: 1,
+					pool: [pizza],
+					result: .item(pizza),
+					scope: .list(lunch),
+				)
+			)
+		}
+		#expect(store.destination?.editor == nil)
+
+		// And the same in the other direction, so this is a property of the state rather than
+		// an ordering that happens to hold one way round.
+		store.send(.rowTapped(pizza)) {
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza)))
+		}
+		#expect(store.destination?.randomise == nil)
+	}
+
 	@Test
 	internal func itemsSortByCreatedAtThenIDAndOnlyShowTheirOwnList() async throws {
 		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
