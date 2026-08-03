@@ -9,7 +9,7 @@ public import SwiftUI
 internal import Components
 internal import Models
 
-/// The editor sheet, at a medium detent: name, emoji, draw mode.
+/// The editor sheet, opening at a medium detent: name, emoji, draw mode.
 ///
 /// The same sheet creates and renames — see ``ListEditor`` — so its title is the only thing
 /// that tells the two apart.
@@ -67,7 +67,21 @@ public struct ListEditorView: View {
 				}
 			}
 		}
-		.presentationDetents([.medium])
+		// Opens at medium, so nothing changes at default sizes — it gains somewhere to go. This
+		// is the sheet with the most content in the app — name field, `EmojiField`, segmented
+		// picker, footer paragraph, against one control each in the other two — and at the
+		// largest accessibility size medium clips the footer off the bottom. `.large` is what
+		// the user can then drag to (ADR-0018).
+		//
+		// **The keyboard is not the reason.** Checked on the simulator: iOS promotes the sheet
+		// clear of the keyboard when the name field takes focus, and did so with `[.medium]`
+		// alone — there is no narrow strip to type into, and no case here for opening at
+		// `.large` rather than merely offering it.
+		//
+		// Not `RandomiseView`'s `isAccessibilitySize` conditional either: that sheet is fixed at
+		// one detent because it is deliberately not resizable, whereas an editor being draggable
+		// is unobjectionable at any size.
+		.presentationDetents([.medium, .large])
 	}
 
 	private var editTitle: Text { Text("Edit List", bundle: #bundle) }
