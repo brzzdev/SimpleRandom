@@ -274,7 +274,9 @@ Large navigation title `Lists`, `+` the only toolbar item, pull to refresh. No r
 
 ### List detail
 
-Inline navigation title = the List's name. Toolbar `+` adds an Item.
+Inline navigation title = the List's name. Toolbar `+` adds an Item, and a Deck carries **Reshuffle** beside it, dimmed until something has been dealt.
+
+That toolbar item is the only place a Deck can be put back mid-run, and it exists because **Reshuffle is available at any time** — the pinned button does not become Reshuffle until the Deck is spent, and the result sheet offers it only once a re-roll has landed on exhaustion. Without it the rule would hold in the domain and be unreachable in the app. A plain List never shows it: there is nothing to put back.
 
 **Items** — one row each, title only. Dealt Items render secondary with a trailing checkmark, so a running Deck reads at a glance. Tap opens a single-field editor sheet at a short detent; trailing swipe deletes with no confirmation.
 
