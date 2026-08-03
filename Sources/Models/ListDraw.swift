@@ -40,3 +40,16 @@ public struct ListDraw: Hashable, Identifiable, Sendable {
 		self.updatedAt = updatedAt
 	}
 }
+
+extension ListDraw {
+	/// Every draw row belonging to one List's Items — what that List has dealt, and exactly
+	/// what Reshuffle deletes.
+	///
+	/// A hard delete, and the whole of it: Reshuffle is not a soft delete and not a partial
+	/// one, which is why ``deletedAt`` is not reserved on this table (ADR-0003). The rows
+	/// are reached through the Items because a draw is keyed on the Item alone — a List
+	/// cannot be named without going through them.
+	public static func inList(_ listID: List.ID) -> Where<ListDraw> {
+		Self.where { $0.itemID.in(Item.where { $0.listID.eq(listID) }.select { $0.id }) }
+	}
+}
