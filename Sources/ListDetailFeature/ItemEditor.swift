@@ -70,10 +70,8 @@ public struct ItemEditor {
 					// `withErrorReporting` reports the failure and returns `nil`. The sheet stays
 					// up when it does: dismissing would throw the draft away and leave the user
 					// believing it saved, which is the one outcome worse than the write failing.
-					//
-					// `Void?` spelled out: the closure returns nothing, so this is only ever a
-					// success flag, and an inferred `()?` is a warning rather than a type anyone
-					// meant to write.
+					// `Void?` is spelled out because the closure returns nothing, and an inferred
+					// `()?` is a warning.
 					let saved: Void? = await withErrorReporting {
 						try await database.write { db in
 							try Item.upsert { draft }.execute(db)

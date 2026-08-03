@@ -265,9 +265,8 @@ public struct RandomiseFeature {
 		let listID = list.id
 		let pool = state.$pool
 		store.addTask(id: reshuffle) {
-			// `Void?` spelled out: `withErrorReporting` hands back the closure's own result, which
-			// here is nothing at all, and an inferred `()?` is a warning rather than a type
-			// anyone meant to write. It is read as a success flag below and nothing else.
+			// `Void?` is spelled out because the closure returns nothing, and an inferred `()?`
+			// is a warning.
 			let reshuffled: Void? = await withErrorReporting {
 				try await database.write { db in
 					try ListDraw.inList(listID).delete().execute(db)
