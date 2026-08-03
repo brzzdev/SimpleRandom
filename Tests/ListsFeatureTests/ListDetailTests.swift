@@ -230,8 +230,8 @@ internal struct ListDetailTests {
 			$0.randomise = RandomiseFeature.State.DebugSnapshot(
 				drawToken: 1,
 				pool: [pizza],
-				result: pizza,
-				scope: .list(UUID(-1)),
+				result: .item(pizza),
+				scope: .list(lunch),
 			)
 		}
 	}
@@ -277,7 +277,13 @@ internal struct ListDetailTests {
 		// lazy `_snapshotType`, which traps the moment the comparison reads it — so a
 		// `@FetchAll` in an expected state is supplied or it takes the test process down.
 		store.send(.rowTapped(summary)) {
-			$0.detail = ListDetail.State.DebugSnapshot(editor: nil, items: [], list: lunch, randomise: nil)
+			$0.detail = ListDetail.State.DebugSnapshot(
+				draws: [],
+				editor: nil,
+				items: [],
+				list: lunch,
+				randomise: nil,
+			)
 		}
 
 		store.send(.detail(.newItemButtonTapped)) {
@@ -306,6 +312,138 @@ internal struct ListDetailTests {
 		try await reloadDetailItems(store)
 		#expect(store.summaries.map(\.itemCount) == [0])
 		#expect(store.detail?.items.isEmpty == true)
+	}
+}
+
+// MARK: - Deck mode
+
+extension ListDetailTests {
+	@Test
+	internal func aDeckKnowsWhatItHasDealtAndWhatItHasLeft() async throws {
+		let deck = Models.List(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Lunch")
+		try await seed { db in
+			try db.seed {
+				deck
+				Models.List(id: UUID(-2), createdAt: .seed, drawMode: .deck, name: "Films")
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Ramen")
+				Item(id: UUID(-3), createdAt: .seed, listID: UUID(-1), title: "Tacos")
+				Item(id: UUID(-4), createdAt: .seed, listID: UUID(-2), title: "Alien")
+
+				// One of this List's, and one of another's — which the screen must not count,
+				// even though a draw row names only the Item.
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+				ListDraw(itemID: UUID(-4), createdAt: .seed)
+			}
+		}
+		let store = TestStore(initialState: ListDetail.State(list: deck)) { ListDetail() }
+
+		// What the caption and the checkmarks are made of: `Deck · 2 of 3 left`, with the dealt
+		// Item rendering secondary.
+		#expect(store.dealtItemIDs == [UUID(-1)])
+		#expect(store.remainingCount == 2)
+		#expect(store.isExhausted == false)
+	}
+
+	@Test
+	internal func aDeckIsExhaustedOnlyWhenItHasItemsAndHasDealtThemAll() async throws {
+		let deck = Models.List(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Lunch")
+		try await seed { db in try db.seed { deck } }
+
+		// An empty List has dealt everything it holds and is *not* exhausted: its Randomise is
+		// disabled with a prompt to add something, rather than offering to put back cards that
+		// were never dealt.
+		let store = TestStore(initialState: ListDetail.State(list: deck)) { ListDetail() }
+		#expect(store.isExhausted == false)
+
+		try await seed { db in
+			try db.seed {
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+			}
+		}
+		// Read rather than `expect`ed: a `@FetchAll` drives no assertion of its own, and
+		// nothing else here has moved for it to be compared alongside.
+		try await reloadItems(store)
+		try await reloadDraws(store)
+		#expect(store.items.map(\.title) == ["Pizza"])
+		#expect(store.draws.map(\.itemID) == [UUID(-1)])
+		#expect(store.isExhausted)
+
+		// And an Item added to a spent Deck un-exhausts it: a new Item arrives undealt, because
+		// a draw row is keyed on the Item's identity and nothing else touches it.
+		try await seed { db in
+			try db.seed { Item(id: UUID(-2), createdAt: .later, listID: UUID(-1), title: "Ramen") }
+		}
+		try await reloadItems(store)
+		#expect(store.items.map(\.title) == ["Pizza", "Ramen"])
+		#expect(store.isExhausted == false)
+		#expect(store.remainingCount == 1)
+	}
+
+	@Test
+	internal func reshufflePutsEveryDealtItemBackAndLeavesOtherListsAlone() async throws {
+		let deck = Models.List(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Lunch")
+		try await seed { db in
+			try db.seed {
+				deck
+				Models.List(id: UUID(-2), createdAt: .seed, drawMode: .deck, name: "Films")
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Ramen")
+				Item(id: UUID(-3), createdAt: .seed, listID: UUID(-2), title: "Alien")
+
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+				ListDraw(itemID: UUID(-2), createdAt: .seed)
+				ListDraw(itemID: UUID(-3), createdAt: .seed)
+			}
+		}
+		let store = TestStore(initialState: ListDetail.State(list: deck)) { ListDetail() }
+		#expect(store.isExhausted)
+
+		// The whole set, hard-deleted, and not one row more: "dealt in Lunch" and "dealt in
+		// Films" are separate facts, and a Deck reaches its rows through its own Items.
+		await store.send(.reshuffleButtonTapped)?.value
+
+		// Read rather than `expect`ed, for the reason ``deletingAnItemDoesNotAskFirst`` gives:
+		// Reshuffle moves nothing but a `@FetchAll`.
+		try await reloadDraws(store)
+		#expect(store.draws.isEmpty)
+		#expect(store.isExhausted == false)
+		#expect(store.remainingCount == 2)
+		#expect(try await draws().map(\.itemID) == [UUID(-3)])
+	}
+
+	@Test
+	internal func editingAnItemKeepsItsDrawRow() async throws {
+		let deck = Models.List(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Lunch")
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		try await seed { db in
+			try db.seed {
+				deck
+				pizza
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+			}
+		}
+		let store = TestStore(initialState: ListDetail.State(list: deck)) { ListDetail() }
+
+		store.send(.rowTapped(pizza)) {
+			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza))
+		}
+		store.modify {
+			$0.editor?.draft.title = "Pizza Express"
+		}
+		await store.send(.editor(.saveButtonTapped))?.value
+
+		// Identity is the row, not the text: an edit is an update to the Item that already
+		// exists, so the draw keyed on its id survives being renamed. A delete-and-reinsert
+		// would have taken it with it, and quietly put a dealt card back in the deck.
+		try await reloadItems(store)
+		store.expect {
+			$0.editor = nil
+			$0.items = [Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza Express")]
+		}
+		#expect(try await draws().map(\.itemID) == [UUID(-1)])
+		#expect(store.isExhausted)
 	}
 }
 
@@ -345,6 +483,11 @@ extension ListDetailTests {
 		try await store.state.detail?.$items.load()
 	}
 
+	/// Reloads the Deck's draw rows. See ``reloadItems(_:)`` for why a test has to ask.
+	private func reloadDraws(_ store: TestStore<ListDetail>) async throws {
+		try await store.state.$draws.load()
+	}
+
 	/// Reloads the index the detail is pushed from. See ``reloadItems(_:)`` for why a test has
 	/// to ask.
 	private func reloadIndex(_ store: TestStore<ListsFeature>) async throws {
@@ -366,5 +509,10 @@ extension ListDetailTests {
 
 	private func items() async throws -> [Item] {
 		try await database.read { db in try Item.all.order { ($0.createdAt, $0.id) }.fetchAll(db) }
+	}
+
+	/// Every draw row in the database, whichever List's Item it belongs to.
+	private func draws() async throws -> [ListDraw] {
+		try await database.read { db in try ListDraw.all.order(by: \.itemID).fetchAll(db) }
 	}
 }

@@ -33,6 +33,17 @@
           }
         }
       }
+    },
+    "Reshuffle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reshuffle"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

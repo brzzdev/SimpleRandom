@@ -13,40 +13,67 @@ extension View {
 	/// dodges the keyboard, and never needs content padded around it. Both `ListDetail` and
 	/// `ComboDetail` render it, and a rule written only in prose is one the second of them can
 	/// honour differently.
+	///
+	/// `isExhausted` is what turns the button into **Reshuffle**: a spent Deck's primary action
+	/// is putting the cards back, and it is offered in place of a Randomise that has nothing
+	/// left to deal rather than as a second control beside it.
 	public func randomiseBar(
 		caption: Text,
+		spokenCaption: Text,
 		isEnabled: Bool,
+		isExhausted: Bool,
 		action: @escaping () -> Void,
 	) -> some View {
 		safeAreaInset(edge: .bottom) {
-			RandomiseBar(caption: caption, isEnabled: isEnabled, action: action)
+			RandomiseBar(
+				caption: caption,
+				spokenCaption: spokenCaption,
+				isEnabled: isEnabled,
+				isExhausted: isExhausted,
+				action: action,
+			)
 		}
 	}
 }
 
 /// The pinned Randomise bar both detail screens render: a full-width prominent capsule with
-/// a caption beneath it. Placed by ``SwiftUI/View/randomiseBar(caption:isEnabled:action:)``.
+/// a caption beneath it. Placed by
+/// ``SwiftUI/View/randomiseBar(caption:spokenCaption:isEnabled:isExhausted:action:)``.
 ///
 /// The caption arrives already composed, as `Text`, because each variant is one whole
 /// catalogue entry and those entries belong to the screen that authors them — `N items` and
 /// `Add an item to randomise` on the Lists path, three distinct prompts on the Combine one
 /// (ADR-0022). This view owns the shape and the accessibility treatment, and no strings but
 /// its own.
+///
+/// It arrives twice, because the separator differs: `Deck · 10 of 13 left` is read and
+/// `Deck, 10 of 13 left` is spoken, and each is authored rather than derived from the other.
+/// Where a caption has no punctuation to differ over, both arguments are the same `Text`.
 internal struct RandomiseBar: View {
 	private let action: () -> Void
 	private let caption: Text
 	private let isEnabled: Bool
+	private let isExhausted: Bool
+	private let spokenCaption: Text
 
-	internal init(caption: Text, isEnabled: Bool, action: @escaping () -> Void) {
+	internal init(
+		caption: Text,
+		spokenCaption: Text,
+		isEnabled: Bool,
+		isExhausted: Bool,
+		action: @escaping () -> Void,
+	) {
 		self.action = action
 		self.caption = caption
 		self.isEnabled = isEnabled
+		self.isExhausted = isExhausted
+		self.spokenCaption = spokenCaption
 	}
 
 	internal var body: some View {
 		VStack(spacing: 8) {
 			Button(action: action) {
-				Text("Randomise", bundle: #bundle)
+				title
 					.font(.headline)
 					.frame(maxWidth: .infinity)
 			}
@@ -59,6 +86,10 @@ internal struct RandomiseBar: View {
 				.font(.caption)
 				.foregroundStyle(.secondary)
 				.multilineTextAlignment(.center)
+				// The spoken form of this same caption, which differs only in its separator.
+				// Overriding the child's label rather than the combined element's is what keeps
+				// the button's own word — and its traits — out of a string joined in Swift.
+				.accessibilityLabel(spokenCaption)
 		}
 		// Nothing here clamps Dynamic Type. At the largest accessibility size the bar costs
 		// about a quarter of the screen permanently — capping type size on the app's primary
@@ -73,5 +104,13 @@ internal struct RandomiseBar: View {
 		// that says *why* the button is dimmed, and `accessibilityHint` would put that reason
 		// behind "Speak Hints" — a setting the user controls (ADR-0018).
 		.accessibilityElement(children: .combine)
+	}
+
+	/// **Randomise**, or **Reshuffle** once the Deck it belongs to is spent. Both words are
+	/// this component's own, so both entries live in its catalogue.
+	private var title: Text {
+		isExhausted
+			? Text("Reshuffle", bundle: #bundle)
+			: Text("Randomise", bundle: #bundle)
 	}
 }
