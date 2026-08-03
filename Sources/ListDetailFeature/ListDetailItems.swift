@@ -51,6 +51,11 @@ internal struct ListDetailItems: View {
 						}
 					}
 					.foregroundStyle(isDealt ? .secondary : .primary)
+					// `.plain` hit-tests the label's drawn content, so without this the tap
+					// target is the title's glyphs and the checkmark's column is dead on every
+					// undealt Item. On the label rather than the `Button`, since the label is
+					// what the style tests.
+					.contentShape(.rect)
 				}
 				.buttonStyle(.plain)
 				// A **value**, not the `.isSelected` trait: that trait says "Selected", which is
