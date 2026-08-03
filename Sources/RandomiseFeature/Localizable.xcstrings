@@ -11,6 +11,39 @@
           }
         }
       }
+    },
+    "Every item in %@ has been dealt once." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Every item in %@ has been dealt once."
+          }
+        }
+      }
+    },
+    "Reshuffle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reshuffle"
+          }
+        }
+      }
+    },
+    "That's the whole deck" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That's the whole deck"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

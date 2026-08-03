@@ -17,12 +17,23 @@ internal import SQLiteData
 /// carries a ``DrawScope`` and the pick happens here, so one implementation and one test
 /// suite cover both surfaces (ADR-0016).
 ///
-/// This is the plain path — `drawMode == .independent`, no memory, the same Item twice in a
-/// row legal and not suppressed (ADR-0004). Deck mode, the draw row and Reshuffle arrive
-/// with #22, and the Combine pool with #24.
+/// Both draw modes run through here. A plain List has no memory — the same Item twice in a
+/// row is legal and is not suppressed (ADR-0004) — while a Deck draws only over Items with
+/// no ``ListDraw`` row, inserts one for the Item it deals, and offers **Reshuffle** once
+/// there are none left (#22). The Combine pool arrives with #24.
 @Feature
 public struct RandomiseFeature {
 	public struct State {
+		/// What the sheet is showing: a dealt Item, or a Deck that has run out.
+		///
+		/// One value rather than an Item beside an `isExhausted` flag, because the two cases
+		/// are exclusive — "That's the whole deck" replaces the result rather than joining it,
+		/// and a pair of properties could be made to disagree.
+		public enum Result: Hashable, Sendable {
+			case exhausted
+			case item(Item)
+		}
+
 		/// Incremented on every draw and rendered by nothing.
 		///
 		/// A re-roll landing on the Item already shown changes no other state, so this is the
@@ -40,31 +51,44 @@ public struct RandomiseFeature {
 		/// where the name suggests (ADR-0021).
 		private(set) public var drawToken = 0
 
-		/// Every candidate in scope, not just the winner.
+		/// Every candidate in scope, not just the winner — and in a Deck, only the ones it has
+		/// left to deal.
 		///
 		/// A `@FetchAll` built from the scope, rather than a pool assembled in the reducer at
 		/// draw time and discarded: this feature is a sheet child whose view can see no other
 		/// state, so anything later cycling the pool has to find it here (ADR-0021).
+		///
+		/// A Deck's pool therefore shrinks by one on every draw, because the row the draw
+		/// writes takes the Item it dealt back out of this query. That churn is the cost of
+		/// keeping the pool in state, and the test suite's exhaustive assertions carry it.
 		@FetchAll internal var pool: [Item]
 
-		/// What the sheet is showing. `nil` only for an empty pool, which the pinned bar's
-		/// disabled state means the user cannot reach.
-		private(set) public var result: Item?
+		/// What the sheet is showing. `nil` only for an empty pool that is not a Deck's, which
+		/// the pinned bar's disabled state means the user cannot reach.
+		private(set) public var result: Result?
 
 		public let scope: DrawScope
 
 		/// **Again** is disabled on a one-item pool, where every draw is a repeat by definition
 		/// and the haptic would be the only thing distinguishing a working button from a broken
 		/// one (ADR-0017).
-		public var canDrawAgain: Bool { pool.count > 1 }
+		///
+		/// A Deck is exempt: no draw of its is a repeat, because each one either deals a card
+		/// that has not been dealt or lands on exhaustion — which is the only way into "That's
+		/// the whole deck", since the detail screen's pinned button already reshuffles a spent
+		/// Deck rather than opening this sheet. Once it is exhausted, **Reshuffle** has replaced
+		/// **Again** and nothing reads this.
+		public var canDrawAgain: Bool {
+			scope.drawMode == .deck || pool.count > 1
+		}
 
 		public init(scope: DrawScope) {
 			self.scope = scope
 			switch scope {
 			case .combo:
 				// #24 builds the pooled query — every Item of every member List, with membership
-				// deduplicated by `listID`. Until then a Combo has no way to present this sheet,
-				// and an empty pool is the safe placeholder: it disables **Again** and draws
+				// deduplicated by `listID` — and `ComboDraw` with it. Until then a Combo has no way
+				// to present this sheet, and an empty pool is the safe placeholder: it draws
 				// nothing, rather than quietly drawing from the wrong scope.
 				//
 				// Reported rather than merely commented, because the failure is otherwise
@@ -72,11 +96,19 @@ public struct RandomiseFeature {
 				reportIssue("A Combo cannot be randomised yet — the pooled query arrives with #24.")
 				_pool = FetchAll(Item.none)
 
-			case .list(let listID):
+			case .list(let list):
+				// A Deck draws only over what it has not dealt; a plain List draws over everything,
+				// including rows left behind by a Deck it used to be — switching back to plain
+				// preserves them, and switching back to a Deck resumes where it left off.
+				let candidates =
+					switch list.drawMode {
+					case .deck: Item.undealt(in: list.id)
+					case .independent: Item.where { $0.listID.eq(list.id) }
+					}
 				// `(createdAt, id)` ascending is the app's one sort order. Selection is uniform, so
 				// the order does not change the odds — it is what makes the pool the same sequence
 				// on every device, which is what a v2 animation over it would need.
-				_pool = FetchAll(Item.where { $0.listID.eq(listID) }.order { ($0.createdAt, $0.id) })
+				_pool = FetchAll(candidates.order { ($0.createdAt, $0.id) })
 			}
 		}
 
@@ -98,15 +130,31 @@ public struct RandomiseFeature {
 			let candidates = pool
 			guard let drawn = withRandomNumberGenerator({ generator in
 				candidates.randomElement(using: &generator)
-			}) else { return }
+			}) else {
+				// A Deck with nothing left to deal is exhausted, and says so in place of the
+				// result. The token moves because that *is* the reveal — the element an
+				// announcement would otherwise re-read has ceased to exist, so the exhausted case
+				// has to speak for itself (ADR-0017).
+				//
+				// A plain List draws nothing and says nothing here. Its pool is empty only when
+				// the List is, and the pinned bar is disabled then, so the user cannot reach it.
+				guard scope.drawMode == .deck else { return }
+				result = .exhausted
+				drawToken += 1
+				return
+			}
 
-			result = drawn
+			result = .item(drawn)
 			drawToken += 1
 		}
 	}
 
 	public enum Action {
 		case againButtonTapped
+		/// The deck is back, so deal from it. Sent by ``reshuffle(_:)`` once the delete has
+		/// landed and the pool has been refilled — never by the view.
+		case deckReshuffled
+		case reshuffleButtonTapped
 	}
 
 	public init() {}
@@ -114,10 +162,15 @@ public struct RandomiseFeature {
 	public var body: some Feature {
 		Update { state, action in
 			switch action {
-			case .againButtonTapped:
+			case .againButtonTapped, .deckReshuffled:
 				// In place, with no memory of the last result: a plain List may deal the same Item
-				// twice in a row, and nothing suppresses it.
+				// twice in a row, and nothing suppresses it. A Deck cannot repeat, because the
+				// draw below is over what it has not dealt.
 				state.draw()
+				deal(state)
+
+			case .reshuffleButtonTapped:
+				reshuffle(state)
 			}
 		}
 		// The opening result. On mount rather than in `State.init` so that the pick is the
@@ -127,6 +180,67 @@ public struct RandomiseFeature {
 		// is what keeps this ahead of the sheet's view. See ``State/drawToken``.
 		.onMount { state in
 			state.draw()
+			deal(state)
+		}
+	}
+
+	/// Records the draw — the row whose existence *is* the deal (ADR-0006).
+	///
+	/// Called wherever a draw has just been revealed, rather than inside ``State/draw()``
+	/// where the winner is computed. In v1 those are the same instant, so this constrains
+	/// nothing today; it matters the moment anything sits between them, because a v2 reveal
+	/// animation that wrote the row at the tap would spend a card the user never saw if the
+	/// sheet were dragged away mid-animation. A Deck may not deal behind the user's back
+	/// (ADR-0021).
+	private func deal(_ state: State) {
+		// A plain List records nothing — it has no memory to keep — and an exhausted Deck has
+		// no Item to record.
+		guard state.scope.drawMode == .deck, case .item(let item) = state.result else { return }
+		// A Combo's deal is a `ComboDraw` row, which arrives with #24. Its pool is empty until
+		// then, so no Item is ever drawn in one to record here.
+		guard case .list = state.scope else { return }
+
+		@Dependency(\.date.now) var now
+		@Dependency(\.defaultDatabase) var database
+		let pool = state.$pool
+		store.addTask {
+			await withErrorReporting {
+				try await database.write { db in
+					try ListDraw.insert { ListDraw(itemID: item.id, createdAt: now) }.execute(db)
+				}
+				// The pool is a live query, and the observation that takes the dealt Item out of
+				// it arrives on its own schedule. Waiting for it here is what stops the next draw
+				// seeing a card that has already gone.
+				try await pool.load()
+			}
+		}
+	}
+
+	/// Puts the whole deck back, then deals from it.
+	///
+	/// Not gated on exhaustion: Reshuffle is available at any time, and this is the same work
+	/// whether the deck is spent or barely touched. It deals afterwards because the button
+	/// sits where **Again** was, and a button in that position produces a result.
+	private func reshuffle(_ state: State) {
+		// As in ``deal(_:)``: a Combo reshuffles its own `ComboDraw` rows, and those arrive
+		// with #24.
+		guard case .list(let list) = state.scope else { return }
+
+		@Dependency(\.defaultDatabase) var database
+		let pool = state.$pool
+		store.addTask {
+			let reshuffled = await withErrorReporting {
+				try await database.write { db in
+					try ListDraw.inList(list.id).delete().execute(db)
+				}
+				// The draw that follows has to see the deck put back rather than race the
+				// observation that refills the pool, so this asks for it and waits.
+				try await pool.load()
+			}
+			// A failed delete leaves the deck exactly as it was. Dealing anyway would land on
+			// exhaustion again and read as a dead button.
+			guard reshuffled != nil else { return }
+			try store.send(.deckReshuffled)
 		}
 	}
 }
