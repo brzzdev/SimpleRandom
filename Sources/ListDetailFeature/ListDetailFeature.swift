@@ -21,7 +21,21 @@ internal import SQLiteData
 /// List alone and leaves a presenting Combo's own deck untouched.
 @Feature
 public struct ListDetail {
+	/// The two sheets this screen puts over the Items, as one optional so only one of them
+	/// can be up at a time.
+	///
+	/// The exclusion is the model's to state rather than the layout's to happen to produce:
+	/// the randomise sheet covers the bar that opens it and the item editor covers the rows
+	/// that open it, but neither of those is a guarantee.
+	@Feature
+	public enum Destination {
+		case editor(ItemEditor)
+		case randomise(RandomiseFeature)
+	}
+
 	public struct State: Identifiable {
+		public var destination: Destination.State?
+
 		/// What this List has dealt. Empty for a plain List, which writes none — and *not*
 		/// empty for a Deck switched back to plain, whose rows are preserved so that switching
 		/// back resumes where it left off.
@@ -30,10 +44,8 @@ public struct ListDetail {
 		/// screen wants the whole set at once — for the caption's arithmetic as much as for the
 		/// checkmarks — and one query per screen is not the per-row fan-out the index avoids.
 		@FetchAll internal var draws: [ListDraw]
-		public var editor: ItemEditor.State?
 		@FetchAll internal var items: [Item]
 		public let list: Models.List
-		public var randomise: RandomiseFeature.State?
 
 		public var id: Models.List.ID { list.id }
 
@@ -82,9 +94,8 @@ public struct ListDetail {
 
 	public enum Action {
 		case deleteSwiped(Item)
-		case editor(ItemEditor.Action)
+		case destination(Destination.Action)
 		case newItemButtonTapped
-		case randomise(RandomiseFeature.Action)
 		case randomiseButtonTapped
 		case reshuffleButtonTapped
 		case rowTapped(Item)
@@ -107,7 +118,7 @@ public struct ListDetail {
 					}
 				}
 
-			case .editor:
+			case .destination:
 				break
 
 			case .newItemButtonTapped:
@@ -115,19 +126,18 @@ public struct ListDetail {
 				// Stamped when the sheet opens rather than when it is saved, as the List editor
 				// does it: `createdAt` is the sort key, so an Item's place in the List is the
 				// moment you started typing it.
-				state.editor = ItemEditor.State(
-					draft: Item.Draft(createdAt: now, listID: state.list.id, title: ""),
+				state.destination = .editor(
+					ItemEditor.State(
+						draft: Item.Draft(createdAt: now, listID: state.list.id, title: ""),
+					)
 				)
-
-			case .randomise:
-				break
 
 			case .randomiseButtonTapped:
 				// The scope is all the sheet is handed: it owns the pool, the pick and the deal
 				// from here (ADR-0016). The state is inert until `.ifLet` mounts it, which happens
 				// before this `send` returns — so the opening result is drawn, and `drawToken`
 				// moved, ahead of the sheet ever being presented.
-				state.randomise = RandomiseFeature.State(scope: .list(state.list))
+				state.destination = .randomise(RandomiseFeature.State(scope: .list(state.list)))
 
 			case .reshuffleButtonTapped:
 				// Puts every dealt Item back, whether the Deck is spent or barely touched:
@@ -144,10 +154,9 @@ public struct ListDetail {
 				}
 
 			case .rowTapped(let item):
-				state.editor = ItemEditor.State(draft: Item.Draft(item))
+				state.destination = .editor(ItemEditor.State(draft: Item.Draft(item)))
 			}
 		}
-		.ifLet(\.editor, action: \.editor) { ItemEditor() }
-		.ifLet(\.randomise, action: \.randomise) { RandomiseFeature() }
+		.ifLet(\.destination, action: \.destination) { Destination.body }
 	}
 }

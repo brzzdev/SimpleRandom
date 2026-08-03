@@ -82,15 +82,8 @@ internal struct RandomiseBar: View {
 
 	internal var body: some View {
 		VStack(spacing: 8) {
-			Button(action: isExhausted ? reshuffle : randomise) {
-				title
-					.font(.headline)
-					.frame(maxWidth: .infinity)
-			}
-			.buttonStyle(.borderedProminent)
-			.buttonBorderShape(.capsule)
-			.controlSize(.large)
-			.disabled(!isEnabled)
+			PrimaryCapsuleButton(label: title, action: isExhausted ? reshuffle : randomise)
+				.disabled(!isEnabled)
 
 			caption
 				.font(.caption)

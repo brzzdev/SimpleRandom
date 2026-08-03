@@ -199,8 +199,8 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 | `Database` | `Models`, SQLiteData | `migrator`, `appDatabase()`, `inMemory()`, the `SyncEngine` factory and its `SyncEngineDelegate` |
 | `Preferences` | `Models` | The two `@Shared(.appStorage)` keys: `theme` and `hasCompletedFirstFetch` |
 | `Acknowledgements` | ComposableArchitecture2 | `Licenses.generated.swift`, the licence list and the licence detail screen |
-| `Components` | `Models`, ComposableArchitecture2 | The three views both tabs render — `EmojiField`, the index row, the pinned Randomise bar |
-| `RandomiseFeature` | `Database`, `Models`, ComposableArchitecture2 | The randomise sheet and the whole draw |
+| `Components` | `Models`, ComposableArchitecture2 | The views both tabs render — `EmojiField`, the index row, the pinned Randomise bar, the primary capsule button |
+| `RandomiseFeature` | `Components`, `Database`, `Models`, ComposableArchitecture2 | The randomise sheet and the whole draw |
 | `ListDetailFeature` | `Components`, `Database`, `Models`, `RandomiseFeature`, ComposableArchitecture2 | `ListDetail` — one List's Items, its editor sheets and its pinned Randomise |
 | `ListsFeature` | `Components`, `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Lists index |
 | `CombineFeature` | `Components`, `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Combine index and `ComboDetail` |
@@ -210,11 +210,11 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 
 Twelve targets. `ListDetailFeature` is extracted for the same reason `RandomiseFeature` is: both tabs present it. A Combo's member row pushes the *real* List detail, not a copy or a read-only preview, so the screen cannot live inside `ListsFeature` without `CombineFeature` importing the whole Lists index to reach it. The two tabs stay peers, neither depending on the other.
 
-`Components` exists for the same peer problem at view scale. `EmojiField` is rendered by the List editor and the Combo form, the index row by both indexes, and the pinned Randomise bar by `ListDetail` and `ComboDetail` — and each carries accessibility treatment (see **Accessibility**) too fiddly to survive being written twice. `ListDetailFeature` is the only target both tabs already reach, and an *index* row does not belong in a *detail* target. It holds views and no logic, so it carries no tests.
+`Components` exists for the same peer problem at view scale. `EmojiField` is rendered by the List editor and the Combo form, the index row by both indexes, the pinned Randomise bar by `ListDetail` and `ComboDetail`, and the primary capsule button by that bar and by the result sheet the bar opens — and each carries treatment (see **Accessibility**) too fiddly to survive being written twice. `ListDetailFeature` is the only target both tabs already reach, and an *index* row does not belong in a *detail* target. It holds views and no logic, so it carries no tests.
 
 Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `Components`, `ListDetailFeature`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`, and `ListDetail`'s behaviour is exercised through `ListsFeatureTests`. `CombineFeature` does not depend on `ListsFeature`: its List checklist reads `Models.List` through its own `@FetchAll`.
 
-Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data` and `swift-dependencies`. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
+Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies` and `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin). The last is named only so `ListsFeature` may import `SwiftUINavigation` for `confirmationDialog(item:)`, which SwiftUI has no form of; TCA26 already brings the package, so the resolved graph is unchanged. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
 
 ### Composition
 
@@ -222,7 +222,9 @@ Features are `@Feature` types with `@ValueObservable` state; the 1.x vocabulary 
 
 `AppFeature.State` holds `var currentTab: Tab = .lists` as plain state — the app always opens on Lists — alongside the three tab features, scoped in `Features { }` under `TabView(selection: $store.currentTab)`.
 
-`ListsFeature.State` holds `@FetchAll var lists` and `var detail: ListDetail.State?`, wired with `.ifLet` and pushed with `.navigationDestination(item:)`; `ListDetail.State` holds `@FetchAll var items`, `var editor: ItemEditor.State?` and `var randomise: RandomiseFeature.State?`, both presented with `.sheet(item:)`. The push and the sheets are therefore the same idiom — optional child state — rather than a `[Path.State]` stack.
+`ListsFeature.State` holds `@FetchAll var lists` and `var detail: ListDetail.State?`, wired with `.ifLet` and pushed with `.navigationDestination(item:)`; `ListDetail.State` holds `@FetchAll var items` and `var destination: Destination.State?`, a two-case enum — `.editor` and `.randomise` — each presented with its own `.sheet(item:)` off a case key path. The push and the sheets are therefore the same idiom — optional child state — rather than a `[Path.State]` stack.
+
+**A screen's mutually exclusive presentations are cases of one optional, not several.** Both `ListsFeature` and `ListDetail` hold a single `destination`, so the exclusion is a fact about the state rather than a property of the layout that happens to hold. `ListDetail` carried two independent optionals until #43, where nothing but the randomise sheet covering the bar that opens it, and the item editor covering the rows that open it, stopped both being up at once.
 
 `ListDetail`'s `@FetchAll` is built in `State.init` rather than declared on the property the way the indexes' are: its query is scoped to one List, and the id only exists once there is a List to read it from.
 
@@ -264,7 +266,7 @@ Large navigation title `Lists`, `+` the only toolbar item, pull to refresh. No r
 
 **Rows** — emoji (or a dimmed 🎲 placeholder) · name · caption. The caption is `N items` for a plain List and `Deck · N of M left` for a Deck, so the index is where you see a Deck running down without opening it.
 
-**Create and edit** — `+` opens an editor sheet at a medium detent: name, emoji, draw mode. The same sheet renames, reached by a leading swipe.
+**Create and edit** — `+` opens an editor sheet at a medium detent, draggable to large: name, emoji, draw mode. The same sheet renames, reached by a leading swipe. It is the sheet with the most content in the app, so it is the one that most needs somewhere to grow.
 
 **Delete** — trailing swipe. An empty List goes immediately; a List with Items raises a confirmation naming it, with `Delete N Items` as the destructive action and "This can't be undone, and it happens on your other devices too." as the message.
 

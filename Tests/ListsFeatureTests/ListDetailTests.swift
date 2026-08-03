@@ -66,12 +66,12 @@ internal struct ListDetailTests {
 		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 
 		store.send(.newItemButtonTapped) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: "")))
 		}
 		store.modify {
-			$0.editor?.draft.title = "  Pizza  "
+			$0.destination.modify(\.editor) { $0.draft.title = "  Pizza  " }
 		}
-		await store.send(.editor(.saveButtonTapped))?.value
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The id is the one thing not written out here: no insert site in the app names an id,
 		// so it comes back from the database that minted it (ADR-0011). Everything else is
@@ -79,7 +79,7 @@ internal struct ListDetailTests {
 		let created = try #require(try await items().last)
 		try await reloadItems(store)
 		store.expect {
-			$0.editor = nil
+			$0.destination = nil
 			// Trimmed on the way in, and accepted alongside the title it duplicates: two Items
 			// in one List may be identical. Under uniform selection that is the user's own
 			// weighting mechanism — adding "Pizza" twice doubles its odds — and nothing
@@ -98,23 +98,23 @@ internal struct ListDetailTests {
 		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 
 		store.send(.newItemButtonTapped) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: "")))
 		}
 		store.modify {
-			$0.editor?.draft.title = "   "
+			$0.destination.modify(\.editor) { $0.draft.title = "   " }
 		}
 
 		// A title is trimmed and non-empty, so there is nothing here to save. The Save button
 		// is disabled on the same rule, and this is the reducer refusing anyway — the button is
 		// a courtesy, not the enforcement.
-		let editor = try #require(store.editor)
+		let editor = try #require(store.destination?.editor)
 		#expect(editor.isSavable == false)
-		await store.send(.editor(.saveButtonTapped))?.value
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The sheet stays up, holding what was typed, rather than dismissing on a save that did
 		// not happen.
 		#expect(try await items().isEmpty)
-		#expect(store.editor != nil)
+		#expect(store.destination?.editor != nil)
 	}
 
 	@Test
@@ -124,10 +124,10 @@ internal struct ListDetailTests {
 		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
 
 		store.send(.newItemButtonTapped) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: "")))
 		}
 		store.modify {
-			$0.editor?.draft.title = "Pizza"
+			$0.destination.modify(\.editor) { $0.draft.title = "Pizza" }
 		}
 
 		// The bluntest write failure available through the public API, and the only part of
@@ -136,12 +136,12 @@ internal struct ListDetailTests {
 		try await database.write { db in try #sql("DROP TABLE items").execute(db) }
 
 		await withExpectedIssue {
-			await store.send(.editor(.saveButtonTapped))?.value
+			await store.send(.destination(.editor(.saveButtonTapped)))?.value
 		}
 
 		// Dismissing here would throw the draft away and leave the user believing it saved,
 		// which is the one outcome worse than the write failing.
-		#expect(store.editor?.draft.title == "Pizza")
+		#expect(store.destination?.editor?.draft.title == "Pizza")
 	}
 
 	@Test
@@ -158,16 +158,16 @@ internal struct ListDetailTests {
 		let pizza = try #require(store.items.first)
 
 		store.send(.rowTapped(pizza)) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza))
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza)))
 		}
 		store.modify {
-			$0.editor?.draft.title = "Pizza Express"
+			$0.destination.modify(\.editor) { $0.draft.title = "Pizza Express" }
 		}
-		await store.send(.editor(.saveButtonTapped))?.value
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		try await reloadItems(store)
 		store.expect {
-			$0.editor = nil
+			$0.destination = nil
 			// An update rather than a replacement: the row keeps its id, and with it the
 			// `createdAt` that holds its place — a delete-and-reinsert would have minted a new
 			// id and sent it to the end. It would also have taken any draw row with it, which
@@ -200,7 +200,7 @@ internal struct ListDetailTests {
 		// ``ListsFeatureTests`` says why that makes `expect` the wrong tool.
 		try await reloadItems(store)
 		#expect(store.items.map(\.title) == ["Ramen"])
-		#expect(store.editor == nil)
+		#expect(store.destination == nil)
 	}
 
 	// `withRandomNumberGenerator` has no test value — it falls through to the live one and
@@ -227,13 +227,59 @@ internal struct ListDetailTests {
 		// A one-item List makes that result predictable without the generator being seeded: it
 		// is the only Item there is.
 		store.send(.randomiseButtonTapped) {
-			$0.randomise = RandomiseFeature.State.DebugSnapshot(
-				drawToken: 1,
-				pool: [pizza],
-				result: .item(pizza),
-				scope: .list(lunch),
+			$0.destination = .randomise(
+				RandomiseFeature.State.DebugSnapshot(
+					drawToken: 1,
+					pool: [pizza],
+					result: .item(pizza),
+					scope: .list(lunch),
+				)
 			)
 		}
+	}
+
+	// The same generator note as ``theDetailIsWhatPresentsTheRandomiseSheet``: a one-item pool
+	// makes the pick fixed whatever the sequence, so the system generator says the result does
+	// not depend on it.
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func onlyOneOfTheDetailsSheetsCanBeUpAtATime() async throws {
+		let lunch = Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		try await seed { db in
+			try db.seed {
+				lunch
+				pizza
+			}
+		}
+		let store = TestStore(initialState: ListDetail.State(list: lunch)) { ListDetail() }
+
+		store.send(.rowTapped(pizza)) {
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza)))
+		}
+
+		// Randomising *replaces* the editor rather than joining it. One optional holding two
+		// cases is what makes that structural: before it, two independent optionals could both
+		// be non-`nil` and nothing but the layout said otherwise — the randomise sheet covers
+		// the bar that opens it and the editor covers the rows that open it, neither of which
+		// is a guarantee.
+		store.send(.randomiseButtonTapped) {
+			$0.destination = .randomise(
+				RandomiseFeature.State.DebugSnapshot(
+					drawToken: 1,
+					pool: [pizza],
+					result: .item(pizza),
+					scope: .list(lunch),
+				)
+			)
+		}
+		#expect(store.destination?.editor == nil)
+
+		// And the same in the other direction, so this is a property of the state rather than
+		// an ordering that happens to hold one way round.
+		store.send(.rowTapped(pizza)) {
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza)))
+		}
+		#expect(store.destination?.randomise == nil)
 	}
 
 	@Test
@@ -278,21 +324,20 @@ internal struct ListDetailTests {
 		// `@FetchAll` in an expected state is supplied or it takes the test process down.
 		store.send(.rowTapped(summary)) {
 			$0.detail = ListDetail.State.DebugSnapshot(
+				destination: nil,
 				draws: [],
-				editor: nil,
 				items: [],
 				list: lunch,
-				randomise: nil,
 			)
 		}
 
 		store.send(.detail(.newItemButtonTapped)) {
-			$0.detail?.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
+			$0.detail?.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: "")))
 		}
 		store.modify {
-			$0.detail?.editor?.draft.title = "Pizza"
+			$0.detail?.destination.modify(\.editor) { $0.draft.title = "Pizza" }
 		}
-		await store.send(.detail(.editor(.saveButtonTapped)))?.value
+		await store.send(.detail(.destination(.editor(.saveButtonTapped))))?.value
 
 		// The index is a separate `@FetchAll` over a separate query, and it is the write to
 		// `items` that reaches it — nothing tells it about the child's edit.
@@ -300,7 +345,7 @@ internal struct ListDetailTests {
 		try await reloadIndex(store)
 		try await reloadDetailItems(store)
 		store.expect {
-			$0.detail?.editor = nil
+			$0.detail?.destination = nil
 			$0.detail?.items = [pizza]
 			$0.summaries = [ListSummary(dealtCount: 0, itemCount: 1, list: lunch)]
 		}
@@ -449,19 +494,19 @@ extension ListDetailTests {
 		let store = TestStore(initialState: ListDetail.State(list: deck)) { ListDetail() }
 
 		store.send(.rowTapped(pizza)) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza))
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(pizza)))
 		}
 		store.modify {
-			$0.editor?.draft.title = "Pizza Express"
+			$0.destination.modify(\.editor) { $0.draft.title = "Pizza Express" }
 		}
-		await store.send(.editor(.saveButtonTapped))?.value
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// Identity is the row, not the text: an edit is an update to the Item that already
 		// exists, so the draw keyed on its id survives being renamed. A delete-and-reinsert
 		// would have taken it with it, and quietly put a dealt card back in the deck.
 		try await reloadItems(store)
 		store.expect {
-			$0.editor = nil
+			$0.destination = nil
 			$0.items = [Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza Express")]
 		}
 		#expect(try await draws().map(\.itemID) == [UUID(-1)])
@@ -484,17 +529,17 @@ extension ListDetailTests {
 	/// what order they come out in, is the claim of whichever test called it.
 	private func add(_ title: String, to store: TestStore<ListDetail>) async throws {
 		store.send(.newItemButtonTapped) {
-			$0.editor = ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: ""))
+			$0.destination = .editor(ItemEditor.State.DebugSnapshot(draft: Item.Draft(createdAt: .seed, listID: UUID(-1), title: "")))
 		}
 		store.modify {
-			$0.editor?.draft.title = title
+			$0.destination.modify(\.editor) { $0.draft.title = title }
 		}
-		await store.send(.editor(.saveButtonTapped))?.value
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		let rows = try await items()
 		try await reloadItems(store)
 		store.expect {
-			$0.editor = nil
+			$0.destination = nil
 			$0.items = rows
 		}
 	}
