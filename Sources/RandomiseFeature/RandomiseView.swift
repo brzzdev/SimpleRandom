@@ -6,6 +6,7 @@
 public import ComposableArchitecture2
 public import SwiftUI
 
+internal import Components
 internal import Models
 
 /// The result: the drawn Item alone in the middle, **Again** at the bottom, and nothing else.
@@ -31,13 +32,22 @@ public struct RandomiseView: View {
 			Spacer(minLength: 0)
 			result
 			Spacer(minLength: 0)
-			// One position, and whichever button belongs in it. **Reshuffle** is what an
-			// exhausted Deck offers where **Again** would otherwise be.
-			if store.result == .exhausted {
-				reshuffleButton
-			} else {
-				againButton
-			}
+			// One position, one button, and the two things it can be. **Reshuffle** is what an
+			// exhausted Deck offers where **Again** would otherwise be — the same flag picks the
+			// word and what the tap does, exactly as the pinned bar does it, so the two cannot
+			// come apart.
+			//
+			// One button rather than a branch between two, so the control keeps its identity
+			// across the swap. `_ConditionalContent` costs nothing today — v1 ships no animation
+			// — but identity is what the v2 reveal would need, and ADR-0021 keeps it open.
+			PrimaryCapsuleButton(
+				label: isExhausted ? Text("Reshuffle", bundle: #bundle) : Text("Again", bundle: #bundle),
+				action: { store.send(isExhausted ? .reshuffleButtonTapped : .againButtonTapped) },
+			)
+			// `canDrawAgain` alone: it is `scope.drawMode == .deck || pool.count > 1`, and an
+			// exhausted deck is a deck — so **Reshuffle** is never disabled without this needing
+			// to say so.
+			.disabled(!store.canDrawAgain)
 		}
 		.padding()
 		.presentationDetents([detent])
@@ -54,30 +64,9 @@ public struct RandomiseView: View {
 		}
 	}
 
-	private var againButton: some View {
-		capsuleButton(Text("Again", bundle: #bundle)) {
-			store.send(.againButtonTapped)
-		}
-		.disabled(!store.canDrawAgain)
-	}
-
-	private var reshuffleButton: some View {
-		capsuleButton(Text("Reshuffle", bundle: #bundle)) {
-			store.send(.reshuffleButtonTapped)
-		}
-	}
-
-	/// The shape both buttons share, so the one that replaces the other cannot drift from it.
-	private func capsuleButton(_ label: Text, action: @escaping () -> Void) -> some View {
-		Button(action: action) {
-			label
-				.font(.headline)
-				.frame(maxWidth: .infinity)
-		}
-		.buttonStyle(.borderedProminent)
-		.buttonBorderShape(.capsule)
-		.controlSize(.large)
-	}
+	/// A Deck that has dealt everything it has, which is the only thing that changes the
+	/// button's word and its action.
+	private var isExhausted: Bool { store.result == .exhausted }
 
 	/// Speaks the result, because nothing in SwiftUI announces changed `Text` inside a
 	/// presented sheet — so **Again** would otherwise be silent to VoiceOver rather than
