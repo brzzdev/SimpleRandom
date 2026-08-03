@@ -265,7 +265,9 @@ public struct RandomiseFeature {
 		let listID = list.id
 		let pool = state.$pool
 		store.addTask(id: reshuffle) {
-			let reshuffled = await withErrorReporting {
+			// `Void?` is spelled out because the closure returns nothing, and an inferred `()?`
+			// is a warning.
+			let reshuffled: Void? = await withErrorReporting {
 				try await database.write { db in
 					try ListDraw.inList(listID).delete().execute(db)
 				}
