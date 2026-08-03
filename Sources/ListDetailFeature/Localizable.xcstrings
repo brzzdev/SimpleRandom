@@ -34,6 +34,39 @@
         }
       }
     },
+    "Dealt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dealt"
+          }
+        }
+      }
+    },
+    "Deck · %lld of %lld left" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deck · %lld of %lld left"
+          }
+        }
+      }
+    },
+    "Deck, %lld of %lld left" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deck, %lld of %lld left"
+          }
+        }
+      }
+    },
     "Delete" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -74,6 +107,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Items"
+          }
+        }
+      }
+    },
+    "Reshuffle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reshuffle"
           }
         }
       }

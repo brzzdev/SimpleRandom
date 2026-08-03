@@ -230,7 +230,7 @@ Combine is one level deeper: `CombineFeature.State` → `ComboDetail.State` → 
 
 **`ListDetail` behaves identically wherever it is pushed.** Presented from a Combo it keeps its pinned Randomise button, its own editor sheets and its own `ListDraw` deck; nothing about it is conditional on the presenting tab. Drawing there draws from that List alone and leaves the Combo's `ComboDraw` rows untouched, which is exactly what **Decks are independent per surface** already says. The alternative — a flag suppressing the button when presented from Combine — was rejected as conditional behaviour on a shared screen to prevent something the domain model has already declared legal.
 
-`RandomiseFeature` owns the draw, not just its presentation. Its state carries a `DrawScope` — `.list(List.ID)` or `.combo(Combo.ID)` — and the feature picks, writes the `ListDraw` or `ComboDraw` row, detects exhaustion and reshuffles.
+`RandomiseFeature` owns the draw, not just its presentation. Its state carries a `DrawScope` — `.list(List)` or `.combo(Combo)` — and the feature picks, writes the `ListDraw` or `ComboDraw` row, detects exhaustion and reshuffles. The scope carries the whole record rather than its id, because the sheet needs more of it than the queries do: the draw mode decides whether a draw deals at all, and an exhausted Deck names the List it has dealt out.
 
 **The pool lives in `RandomiseFeature.State`**, as a `@FetchAll` whose query is built from the `DrawScope`, rather than being assembled inside the reducer at draw time and discarded. This is only **Seams**' read rule applied — but it is also what keeps the sheet's view holding every candidate, not just the winner, which is what any later animation over the pool would need. It is not free: in Deck mode the remaining pool shrinks on every draw, so `RandomiseFeatureTests`' exhaustive assertions carry that churn alongside the result.
 
@@ -274,7 +274,9 @@ Large navigation title `Lists`, `+` the only toolbar item, pull to refresh. No r
 
 ### List detail
 
-Inline navigation title = the List's name. Toolbar `+` adds an Item.
+Inline navigation title = the List's name. Toolbar `+` adds an Item, and a Deck carries **Reshuffle** beside it, dimmed until something has been dealt.
+
+That toolbar item is the only place a Deck can be put back mid-run, and it exists because **Reshuffle is available at any time** — the pinned button does not become Reshuffle until the Deck is spent, and the result sheet offers it only once a re-roll has landed on exhaustion. Without it the rule would hold in the domain and be unreachable in the app. A plain List never shows it: there is nothing to put back.
 
 **Items** — one row each, title only. Dealt Items render secondary with a trailing checkmark, so a running Deck reads at a glance. Tap opens a single-field editor sheet at a short detent; trailing swipe deletes with no confirmation.
 
@@ -288,9 +290,9 @@ A fixed `.medium` detent — `.large` at accessibility sizes, see **Dynamic Type
 
 Nothing surrounds the result on the Lists path — not the List name, not the pool size, not a counter. On the Combine path a `subheadline`-sized secondary line above it carries the source List's emoji and name.
 
-**Again is the only button and drag is the only way out.** No Done, no Close, no toolbar. Again is disabled on a one-item pool.
+**Again is the only button and drag is the only way out.** No Done, no Close, no toolbar. Again is disabled on a one-item pool — except on a Deck, where no draw is a repeat and disabling it would make the exhausted screen below unreachable.
 
-**Exhausted Deck** — in place of the result: `rectangle.stack.badge.minus`, "That's the whole deck", and "Every item in *Name* has been dealt once." **Reshuffle** replaces Again in the same position. Reachable only by re-rolling into it from inside the sheet, since the detail screen's pinned button already reshuffles once a Deck is spent.
+**Exhausted Deck** — in place of the result: `rectangle.stack.badge.minus`, "That's the whole deck", and "Every item in *Name* has been dealt once." **Reshuffle** replaces Again in the same position, and does what a button in that position does: it puts the whole deck back and deals from it, rather than leaving the sheet showing the screen it was just asked to clear. Reachable only by re-rolling into it from inside the sheet, since the detail screen's pinned button already reshuffles once a Deck is spent.
 
 ### Combine tab
 
