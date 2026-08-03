@@ -48,7 +48,7 @@ public struct ListDetail {
 		/// its Randomise is disabled with a prompt to add something rather than an invitation
 		/// to put back cards that were never dealt.
 		public var isExhausted: Bool {
-			isDeck && !items.isEmpty && draws.count == items.count
+			isDeck && !items.isEmpty && remainingCount == 0
 		}
 
 		/// How many Items the Deck has left to deal. Meaningless for a plain List, which has no
@@ -68,7 +68,7 @@ public struct ListDetail {
 			// a total order — two devices creating rows offline in the same second leave SQLite
 			// to break the tie however it likes — and the primary key tie-break is arbitrary
 			// but identical on every device.
-			_items = FetchAll(Item.where { $0.listID.eq(list.id) }.order { ($0.createdAt, $0.id) })
+			_items = FetchAll(Item.inList(list.id).order { ($0.createdAt, $0.id) })
 		}
 	}
 

@@ -50,6 +50,6 @@ extension ListDraw {
 	/// are reached through the Items because a draw is keyed on the Item alone — a List
 	/// cannot be named without going through them.
 	public static func inList(_ listID: List.ID) -> Where<ListDraw> {
-		Self.where { $0.itemID.in(Item.where { $0.listID.eq(listID) }.select { $0.id }) }
+		Self.where { $0.itemID.in(Item.inList(listID).select { $0.id }) }
 	}
 }

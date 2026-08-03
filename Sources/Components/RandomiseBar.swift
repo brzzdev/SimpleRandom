@@ -17,12 +17,18 @@ extension View {
 	/// `isExhausted` is what turns the button into **Reshuffle**: a spent Deck's primary action
 	/// is putting the cards back, and it is offered in place of a Randomise that has nothing
 	/// left to deal rather than as a second control beside it.
+	///
+	/// Both actions are handed over rather than one, so that the flag choosing the word also
+	/// chooses what the tap does. A screen that passed a single closure would be free to leave
+	/// a button reading **Reshuffle** wired to a draw, and nothing would catch it — `Components`
+	/// carries views and no tests by design.
 	public func randomiseBar(
 		caption: Text,
 		spokenCaption: Text,
 		isEnabled: Bool,
 		isExhausted: Bool,
-		action: @escaping () -> Void,
+		randomise: @escaping () -> Void,
+		reshuffle: @escaping () -> Void,
 	) -> some View {
 		safeAreaInset(edge: .bottom) {
 			RandomiseBar(
@@ -30,7 +36,8 @@ extension View {
 				spokenCaption: spokenCaption,
 				isEnabled: isEnabled,
 				isExhausted: isExhausted,
-				action: action,
+				randomise: randomise,
+				reshuffle: reshuffle,
 			)
 		}
 	}
@@ -38,7 +45,7 @@ extension View {
 
 /// The pinned Randomise bar both detail screens render: a full-width prominent capsule with
 /// a caption beneath it. Placed by
-/// ``SwiftUI/View/randomiseBar(caption:spokenCaption:isEnabled:isExhausted:action:)``.
+/// ``SwiftUI/View/randomiseBar(caption:spokenCaption:isEnabled:isExhausted:randomise:reshuffle:)``.
 ///
 /// The caption arrives already composed, as `Text`, because each variant is one whole
 /// catalogue entry and those entries belong to the screen that authors them — `N items` and
@@ -50,10 +57,11 @@ extension View {
 /// `Deck, 10 of 13 left` is spoken, and each is authored rather than derived from the other.
 /// Where a caption has no punctuation to differ over, both arguments are the same `Text`.
 internal struct RandomiseBar: View {
-	private let action: () -> Void
 	private let caption: Text
 	private let isEnabled: Bool
 	private let isExhausted: Bool
+	private let randomise: () -> Void
+	private let reshuffle: () -> Void
 	private let spokenCaption: Text
 
 	internal init(
@@ -61,18 +69,20 @@ internal struct RandomiseBar: View {
 		spokenCaption: Text,
 		isEnabled: Bool,
 		isExhausted: Bool,
-		action: @escaping () -> Void,
+		randomise: @escaping () -> Void,
+		reshuffle: @escaping () -> Void,
 	) {
-		self.action = action
 		self.caption = caption
 		self.isEnabled = isEnabled
 		self.isExhausted = isExhausted
+		self.randomise = randomise
+		self.reshuffle = reshuffle
 		self.spokenCaption = spokenCaption
 	}
 
 	internal var body: some View {
 		VStack(spacing: 8) {
-			Button(action: action) {
+			Button(action: isExhausted ? reshuffle : randomise) {
 				title
 					.font(.headline)
 					.frame(maxWidth: .infinity)
@@ -107,7 +117,8 @@ internal struct RandomiseBar: View {
 	}
 
 	/// **Randomise**, or **Reshuffle** once the Deck it belongs to is spent. Both words are
-	/// this component's own, so both entries live in its catalogue.
+	/// this component's own, so both entries live in its catalogue — and the same flag picks
+	/// the word and the action above, so the two cannot come apart.
 	private var title: Text {
 		isExhausted
 			? Text("Reshuffle", bundle: #bundle)

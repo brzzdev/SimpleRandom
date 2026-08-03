@@ -53,17 +53,19 @@ public struct ListDetailView: View {
 		// Over the empty state as well as over the Items: an empty List is legal — you have just
 		// made it — and its Randomise is visible but disabled, with a prompt to add something
 		// rather than a button that has quietly gone away.
+		//
+		// One button, and the two things it can be: an exhausted Deck reads **Reshuffle** and
+		// puts the cards back, rather than opening a sheet with nothing to show. Which of the
+		// two it is, is the bar's to decide — it is handed both and picks with the same flag it
+		// picks the word with.
 		.randomiseBar(
-			caption: randomiseCaption,
-			spokenCaption: randomiseSpokenCaption,
+			caption: randomiseCaptions.read,
+			spokenCaption: randomiseCaptions.spoken,
 			isEnabled: !store.items.isEmpty,
 			isExhausted: store.isExhausted,
-		) {
-			// The same button, and the two things it can be: an exhausted Deck reads
-			// **Reshuffle** and puts the cards back, rather than opening a sheet with nothing to
-			// show.
-			store.send(store.isExhausted ? .reshuffleButtonTapped : .randomiseButtonTapped)
-		}
+			randomise: { store.send(.randomiseButtonTapped) },
+			reshuffle: { store.send(.reshuffleButtonTapped) },
+		)
 		.sheet(item: $store.scope(\.editor, action: \.editor)) { editorStore in
 			ItemEditorView(store: editorStore)
 		}
@@ -127,35 +129,33 @@ public struct ListDetailView: View {
 		}
 	}
 
-	/// What sits under the button: `4 items`, `Deck · 10 of 13 left`, or why it is dimmed.
+	/// What sits under the button — `4 items`, `Deck · 10 of 13 left`, or why it is dimmed —
+	/// and what VoiceOver reads in its place, so the bar says
+	/// `Randomise, Deck, 10 of 13 left, button`.
 	///
 	/// Each variant is one catalogue entry rather than fragments joined in Swift — a join is
 	/// the one construction that cannot be translated (ADR-0022) — and the count is inflected,
-	/// because plain interpolation renders "1 items" on screen for everyone (ADR-0018).
+	/// because plain interpolation renders "1 items" on screen for everyone (ADR-0018). The
+	/// Deck's is authored twice because its separator differs: `·` is read and a comma is
+	/// spoken. The two with no separator to differ over are one entry, said once.
 	///
-	/// The Deck's caption is the index row's, word for word, so that opening a List tells you
-	/// nothing different from the row you opened it from.
-	private var randomiseCaption: Text {
+	/// Both come off the same branch rather than two that have to agree, and the Deck's wording
+	/// is the index row's word for word, so that opening a List tells you nothing different
+	/// from the row you opened it from.
+	private var randomiseCaptions: (read: Text, spoken: Text) {
 		if store.items.isEmpty {
-			Text("Add an item to randomise", bundle: #bundle)
-		} else if store.isDeck {
-			Text("Deck · \(store.remainingCount) of \(store.items.count) left", bundle: #bundle)
-		} else {
-			Text("^[\(store.items.count) items](inflect: true)", bundle: #bundle)
+			let prompt = Text("Add an item to randomise", bundle: #bundle)
+			return (prompt, prompt)
 		}
-	}
 
-	/// What VoiceOver reads in place of ``randomiseCaption``, so the bar says
-	/// `Randomise, Deck, 10 of 13 left, button`.
-	///
-	/// Authored separately rather than derived, because the spoken separator is a comma where
-	/// the visible one is `·` — the same two-string rule the index rows follow (ADR-0022).
-	/// The two captions with no separator to differ over are the same entry, said once.
-	private var randomiseSpokenCaption: Text {
-		if store.isDeck, !store.items.isEmpty {
-			Text("Deck, \(store.remainingCount) of \(store.items.count) left", bundle: #bundle)
-		} else {
-			randomiseCaption
+		if store.isDeck {
+			return (
+				Text("Deck · \(store.remainingCount) of \(store.items.count) left", bundle: #bundle),
+				Text("Deck, \(store.remainingCount) of \(store.items.count) left", bundle: #bundle)
+			)
 		}
+
+		let count = Text("^[\(store.items.count) items](inflect: true)", bundle: #bundle)
+		return (count, count)
 	}
 }

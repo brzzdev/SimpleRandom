@@ -49,6 +49,12 @@ public struct Item: Hashable, Identifiable, Sendable {
 }
 
 extension Item {
+	/// The Items of one List, in no particular order — the whole of what a plain List draws
+	/// over, and where every other scoped query starts.
+	public static func inList(_ listID: List.ID) -> Where<Item> {
+		Self.where { $0.listID.eq(listID) }
+	}
+
 	/// The Items of one List that have no ``ListDraw`` row — everything a Deck has left to
 	/// deal.
 	///
@@ -64,7 +70,7 @@ extension Item {
 	/// Unordered, because the two callers want different things of it — the sheet's pool is
 	/// `(createdAt, id)` like everything else, and a count is not ordered at all.
 	public static func undealt(in listID: List.ID) -> Where<Item> {
-		Self.where { $0.listID.eq(listID) && $0.id.notIn(ListDraw.all.select { $0.itemID }) }
+		inList(listID) + Self.where { $0.id.notIn(ListDraw.all.select { $0.itemID }) }
 	}
 }
 

@@ -110,7 +110,7 @@ public struct RandomiseFeature {
 				let candidates =
 					switch list.drawMode {
 					case .deck: Item.undealt(in: list.id)
-					case .independent: Item.where { $0.listID.eq(list.id) }
+					case .independent: Item.inList(list.id)
 					}
 				// `(createdAt, id)` ascending is the app's one sort order. Selection is uniform, so
 				// the order does not change the odds — it is what makes the pool the same sequence
@@ -140,9 +140,10 @@ public struct RandomiseFeature {
 			// arrives before that lands would otherwise see a card the deck has already spent —
 			// and deal it a second time. The rule is the deck's own, applied to the state that
 			// has not caught up with it yet.
+			let showing = result?.item?.id
 			let candidates =
 				switch scope.drawMode {
-				case .deck: pool.filter { $0.id != result?.item?.id }
+				case .deck: pool.filter { $0.id != showing }
 				case .independent: pool
 				}
 			guard let drawn = withRandomNumberGenerator({ generator in
@@ -210,12 +211,15 @@ public struct RandomiseFeature {
 	/// sheet were dragged away mid-animation. A Deck may not deal behind the user's back
 	/// (ADR-0021).
 	private func deal(_ state: State) {
-		// A plain List records nothing — it has no memory to keep — and an exhausted Deck has
-		// no Item to record.
-		guard state.scope.drawMode == .deck, case .item(let item) = state.result else { return }
-		// A Combo's deal is a `ComboDraw` row, which arrives with #24. Its pool is empty until
-		// then, so no Item is ever drawn in one to record here.
-		guard case .list = state.scope else { return }
+		// Three things have to hold, and one `guard` says all three: this is a List, because a
+		// Combo's deal is a `ComboDraw` row and that arrives with #24; it is a Deck, because a
+		// plain List has no memory to keep; and it is showing an Item, because an exhausted
+		// Deck has nothing to record.
+		guard
+			case .list(let list) = state.scope,
+			list.drawMode == .deck,
+			case .item(let item) = state.result
+		else { return }
 
 		@Dependency(\.date.now) var now
 		@Dependency(\.defaultDatabase) var database
@@ -244,11 +248,14 @@ public struct RandomiseFeature {
 		guard case .list(let list) = state.scope else { return }
 
 		@Dependency(\.defaultDatabase) var database
+		// The id rather than the record: the task outlives this call, and the rest of the List
+		// is not its business.
+		let listID = list.id
 		let pool = state.$pool
 		store.addTask {
 			let reshuffled = await withErrorReporting {
 				try await database.write { db in
-					try ListDraw.inList(list.id).delete().execute(db)
+					try ListDraw.inList(listID).delete().execute(db)
 				}
 				// The draw that follows has to see the deck put back rather than race the
 				// observation that refills the pool, so this asks for it and waits.
