@@ -14,10 +14,15 @@ internal import Testing
 
 // `@testable` for the `DebugSnapshot` types the exhaustive assertions are written against:
 // the macro makes each one as visible as the state it mirrors, but their memberwise
-// initialisers are synthesised and so internal to the target that declares them.
+// initialisers are synthesised and so internal to the target that declares them. The two
+// screens `ComboDetail` presents are declared in targets of their own, so their snapshots —
+// and `RandomiseFeature`'s pool, which is internal — are reached the same way.
 @testable internal import CombineFeature
+@testable internal import ListDetailFeature
+@testable internal import RandomiseFeature
 
-/// The Combine index and the one form (#23). `ComboDetail` is #24.
+/// The Combine index and the one form (#23), and `ComboDetail` — a Combo's member Lists and
+/// its pooled draw (#24).
 ///
 /// One in-memory database per test case, built by the real `migrator` — a hand-written test
 /// schema would forfeit the reason these tests can say anything about cascades (ADR-0019).
@@ -697,6 +702,356 @@ internal struct CombineFeatureTests {
 	}
 }
 
+// MARK: - The Combo's detail
+
+extension CombineFeatureTests {
+	@Test
+	internal func theDetailShowsItsMemberListsWithCountsOnly() async throws {
+		try await seed { db in
+			try db.seed {
+				// A Deck, part-way through, so that a member row showing `Deck · 1 of 2 left`
+				// would be visible here. It reads `2 items`: counts only, in Combine, everywhere
+				// — a Combo pools every Item of every member regardless of what that List has
+				// dealt (ADR-0007).
+				Models.List.deckLunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Sushi")
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+
+				Models.List.films
+				Item(id: UUID(-3), createdAt: .seed, listID: UUID(-2), title: "Heat")
+
+				// Not a member, and its Item is older than every other — so it would sort first,
+				// and be counted, if the members query were not scoped to the Combo.
+				Models.List(id: UUID(-3), createdAt: .earlier, name: "Chores")
+				Item(id: UUID(-4), createdAt: .earlier, listID: UUID(-3), title: "Washing up")
+
+				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
+			}
+		}
+		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(store.summaries.first)
+
+		// Pushed as optional child state, the same idiom the sheets use and the same one the
+		// Lists tab pushes its detail with — a `.navigationDestination(item:)` rather than a
+		// stack of paths (ADR-0013).
+		//
+		// `combo` and `members` are spelled out rather than left to the snapshot's default.
+		// That default is a lazy `_snapshotType`, which traps the moment the comparison reads
+		// it — so a fetched property in an expected state is supplied or it takes the test
+		// process down.
+		store.send(.rowTapped(summary)) {
+			$0.detail = ComboDetail.State.DebugSnapshot(
+				combo: summary.combo,
+				destination: nil,
+				detail: nil,
+				members: [
+					ListOption(itemCount: 2, list: .deckLunch),
+					ListOption(itemCount: 1, list: .films),
+				],
+			)
+		}
+
+		let detail = try #require(store.detail)
+		#expect(detail.itemCount == 3)
+		#expect(detail.randomiseCaption == .pool(count: 3))
+		#expect(detail.canRandomise)
+	}
+
+	@Test
+	internal func theDisabledCaptionsSayWhichOfTheTwoThingsIsMissing() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+			}
+		}
+
+		// The screen's state on its own, with no store around it: what is under test is the
+		// property the pinned bar's caption is chosen by, and driving a live query to refresh
+		// underneath a `TestStore` would be testing the observation rather than the choice.
+		var state = ComboDetail.State(combo: Combo(id: UUID(-1), createdAt: .seed, name: "Friday night"))
+
+		// Nothing in the Combo at all: the thing to add is a List, and it is added here.
+		#expect(state.randomiseCaption == .noLists)
+		#expect(state.canRandomise == false)
+
+		try await database.write { db in
+			try db.seed {
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+			}
+		}
+		try await state.$members.load()
+
+		// A member List, and nothing in it. A different sentence because it asks for something
+		// different — Items, added on a screen this one is two taps from. One prompt covering
+		// both would name neither.
+		#expect(state.members.map(\.list.name) == ["Lunch"])
+		#expect(state.randomiseCaption == .noItems)
+		#expect(state.canRandomise == false)
+
+		try await database.write { db in
+			try db.seed {
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+			}
+		}
+		try await state.$members.load()
+
+		// And the one state in which the button is live, captioned with the pool rather than
+		// with a reason. `canRandomise` is read off the caption, so the two can never disagree
+		// — a caption explaining a dimmed button beside a button that is not is the failure
+		// this rules out.
+		#expect(state.randomiseCaption == .pool(count: 1))
+		#expect(state.canRandomise)
+	}
+
+	@Test
+	internal func thePoolIsEveryItemOfEveryMemberListFlattened() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				// The same title twice in one member List, and a third copy in another. None of
+				// them is deduplicated: repetition is the user's own weighting mechanism, and it
+				// works across member Lists exactly as it does within one (ADR-0004).
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+
+				Models.List.films
+				Item(id: UUID(-3), createdAt: .later, listID: UUID(-2), title: "Pizza")
+
+				// Not a member. Its Item sorts first, so an unscoped pool would deal it.
+				Models.List(id: UUID(-3), createdAt: .earlier, name: "Chores")
+				Item(id: UUID(-4), createdAt: .earlier, listID: UUID(-3), title: "Washing up")
+
+				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
+				// The row two devices adding Lunch offline leave behind. Membership is
+				// deduplicated by `listID` when the pool is built, so Lunch contributes its two
+				// Items once rather than four times and its weight is not silently doubled
+				// (ADR-0008).
+				ComboList(id: UUID(-3), comboID: UUID(-1), createdAt: .later, listID: UUID(-1))
+			}
+		}
+		let combo = Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+
+		// The sheet's state on its own, unmounted, so nothing has drawn: what is under test is
+		// the pool, which is where this ticket's half of the draw lives. That every pick is
+		// uniform over whatever pool it is handed — and so that a 100-item List dominates a
+		// 3-item one in a Combo they share — is `RandomiseFeatureTests`' claim about
+		// `State.draw()`, made once for both surfaces (ADR-0016).
+		let state = RandomiseFeature.State(scope: .combo(combo))
+		#expect(state.pool.map(\.id) == [UUID(-1), UUID(-2), UUID(-3)])
+		#expect(state.pool.map(\.title) == ["Pizza", "Pizza", "Pizza"])
+		#expect(state.result == nil)
+
+		// Three entries and three chances, from two member Lists — and each one knows which
+		// List it came from, which is the only thing telling the three apart on the sheet.
+		#expect(state.sourceLists.map(\.name) == ["Lunch", "Films"])
+	}
+
+	// The generator note `ListDetailTests` gives: `withRandomNumberGenerator` has no test
+	// value, so a test that draws has to say which generator it draws from. The system one
+	// deliberately — the pool below holds a single Item, so the pick is fixed whatever the
+	// sequence, and seeding a generator here would suggest the result depended on it.
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func theDetailIsWhatPresentsTheRandomiseSheetAndItNamesTheSourceList() async throws {
+		let lunch = Models.List.lunch
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		try await seed { db in
+			try db.seed {
+				lunch
+				pizza
+				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+			}
+		}
+		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(store.summaries.first)
+
+		store.send(.rowTapped(summary)) {
+			$0.detail = ComboDetail.State.DebugSnapshot(
+				combo: summary.combo,
+				destination: nil,
+				detail: nil,
+				members: [ListOption(itemCount: 1, list: .lunch)],
+			)
+		}
+
+		// You open a Combo, then randomise it — there is no Randomise on an index row, exactly
+		// as on the Lists tab (ADR-0016). The sheet is handed a `DrawScope.combo` and nothing
+		// else, and it has drawn its opening result by the time this returns.
+		store.send(.detail(.randomiseButtonTapped)) {
+			$0.detail?.destination = .randomise(
+				RandomiseFeature.State.DebugSnapshot(
+					drawToken: 1,
+					pool: [pizza],
+					result: .item(pizza),
+					scope: .combo(summary.combo),
+					// The member Lists, so the sheet can name the one the result came from. Two
+					// identical titles from different Lists are otherwise indistinguishable, and
+					// no draw is persisted to look one up afterwards.
+					sourceLists: [lunch],
+				)
+			)
+		}
+		#expect(store.detail?.destination?.randomise?.sourceList == lunch)
+	}
+
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func aComboDrawIgnoresItsMembersDeckStateAndWritesNoneOfItsOwn() async throws {
+		// Lunch is a Deck with its one Item already dealt. Opened on its own it is exhausted;
+		// pooled into a Combo it contributes that Item anyway — a Combo's draw is governed only
+		// by its own `drawMode` and its own rows (ADR-0007). The pool holding it is therefore
+		// also what makes the pick below forced.
+		let deck = Models.List.deckLunch
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		try await seed { db in
+			try db.seed {
+				deck
+				pizza
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+
+				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+			}
+		}
+		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(store.summaries.first)
+
+		store.send(.rowTapped(summary)) {
+			$0.detail = ComboDetail.State.DebugSnapshot(
+				combo: summary.combo,
+				destination: nil,
+				detail: nil,
+				members: [ListOption(itemCount: 1, list: deck)],
+			)
+		}
+		store.send(.detail(.randomiseButtonTapped)) {
+			$0.detail?.destination = .randomise(
+				RandomiseFeature.State.DebugSnapshot(
+					drawToken: 1,
+					pool: [pizza],
+					result: .item(pizza),
+					scope: .combo(summary.combo),
+					sourceLists: [deck],
+				)
+			)
+		}
+
+		// The write a deal would make is queued on the same serialised writer, so this empty
+		// write is a wait rather than a sleep — and there is nothing to wait for, which is the
+		// point.
+		try await database.write { _ in }
+
+		// Not one row moved. Drawing from a Combo writes no `ListDraw` row, so Lunch's own deck
+		// is exactly where it was; and it writes no `ComboDraw` row either, because the Combo is
+		// plain. A Combo Deck's own rows arrive with #25.
+		#expect(try await listDraws().map(\.itemID) == [UUID(-1)])
+		#expect(try await draws().isEmpty)
+	}
+
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func aComboDeckDealsPlainlyUntilItHasADeckOfItsOwn() async throws {
+		// A Combo the form has already been able to set to Deck since #23, drawing through a
+		// sheet that has no `ComboDraw` row to deal against until #25.
+		let combo = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				pizza
+				combo
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+			}
+		}
+
+		// The interim is reported, from `State.init`, because a Deck that records nothing is not
+		// the Deck the form offered — see `RandomiseFeature.State.dealsAsDeck`. Built apart from
+		// the store so that only the construction is inside the expectation.
+		var state: RandomiseFeature.State?
+		withExpectedIssue { state = RandomiseFeature.State(scope: .combo(combo)) }
+		let store = TestStore(initialState: try #require(state)) {
+			RandomiseFeature()
+		} changes: {
+			$0.drawToken = 1
+			$0.result = .item(pizza)
+		}
+
+		// It deals plainly: a one-item pool draws that Item every time, **Again** is disabled
+		// exactly as it is for a plain one-item List, and nothing here can reach exhaustion. The
+		// alternative is the failure this pins — a re-roll landing on "That's the whole deck"
+		// and a **Reshuffle** that nothing implements, on a sheet whose only other way out is a
+		// drag.
+		#expect(store.canDrawAgain == false)
+		store.send(.againButtonTapped) {
+			$0.drawToken = 2
+		}
+		#expect(store.result == .item(pizza))
+		#expect(try await draws().isEmpty)
+	}
+
+	// The same generator note as above, for the member List's own draw at the foot of this
+	// test: a one-item pool makes the pick fixed whatever the sequence.
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func aMemberRowPushesTheRealListDetail() async throws {
+		let lunch = Models.List.lunch
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		try await seed { db in
+			try db.seed {
+				lunch
+				pizza
+				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+			}
+		}
+		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(store.summaries.first)
+		let member = ListOption(itemCount: 1, list: lunch)
+
+		store.send(.rowTapped(summary)) {
+			$0.detail = ComboDetail.State.DebugSnapshot(
+				combo: summary.combo,
+				destination: nil,
+				detail: nil,
+				members: [member],
+			)
+		}
+
+		// The *real* `ListDetail`, three levels of optional child state deep — the same screen
+		// the Lists tab pushes, holding the same List record, with nothing conditional on which
+		// tab presented it (ADR-0014). Its own `draws` and `items` are its own queries, which is
+		// what makes it that screen rather than a copy of it.
+		store.send(.detail(.memberTapped(member))) {
+			$0.detail?.detail = ListDetail.State.DebugSnapshot(
+				destination: nil,
+				draws: [],
+				items: [pizza],
+				list: lunch,
+			)
+		}
+
+		// And it keeps its own pinned Randomise, drawing from that List alone: the scope below
+		// is `.list`, so the row this deals writes to `ListDraw` and the Combo's deck never
+		// hears about it. There is no flag suppressing the button because a Combo presented it.
+		store.send(.detail(.detail(.randomiseButtonTapped))) {
+			$0.detail?.detail?.destination = .randomise(
+				RandomiseFeature.State.DebugSnapshot(
+					drawToken: 1,
+					pool: [pizza],
+					result: .item(pizza),
+					scope: .list(lunch),
+					// Empty on the Lists path however it was reached: a List's result has one
+					// possible source and the sheet says nothing about provenance.
+					sourceLists: [],
+				)
+			)
+		}
+	}
+}
+
 // MARK: - Reading and seeding
 
 extension CombineFeatureTests {
@@ -727,6 +1082,12 @@ extension CombineFeatureTests {
 
 	private func draws() async throws -> [ComboDraw] {
 		try await database.read { db in try ComboDraw.all.fetchAll(db) }
+	}
+
+	/// Every member List's *own* draw rows, whichever List's Item they belong to — the table a
+	/// Combo's draw must leave exactly as it found it (ADR-0007).
+	private func listDraws() async throws -> [ListDraw] {
+		try await database.read { db in try ListDraw.all.order(by: \.itemID).fetchAll(db) }
 	}
 
 	private func items() async throws -> [Item] {
@@ -797,6 +1158,16 @@ extension ComboEditor.State.DebugSnapshot {
 }
 
 extension Models.List {
+	/// ``lunch`` as a Deck, for the worlds asking what a Combo does with a member's own deck
+	/// state. The answer is nothing, on both sides: a Combo pools its Items regardless, and
+	/// drawing from the Combo leaves its rows alone.
+	fileprivate static let deckLunch = Models.List(
+		id: UUID(-1),
+		createdAt: .seed,
+		drawMode: .deck,
+		name: "Lunch",
+	)
+
 	/// The two Lists most of these worlds are built from, so that a checklist assertion and
 	/// the seed it is about cannot drift apart.
 	fileprivate static let films = Models.List(id: UUID(-2), createdAt: .later, name: "Films")

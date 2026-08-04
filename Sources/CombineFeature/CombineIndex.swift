@@ -17,9 +17,8 @@ internal import SwiftUINavigation
 /// and their accessibility treatment, and a computed property re-evaluates with its parent
 /// and cannot be diffed on its own.
 ///
-/// Rows do not push anything yet. A Combo's detail screen — read-only membership and the
-/// pinned Randomise — is #24, and a row that opened nothing would be worse than a row that
-/// does not claim to.
+/// A row pushes ``ComboDetailView`` — the Combo's member Lists and its pinned Randomise —
+/// as the Lists tab's rows push a List's Items (#24).
 ///
 /// The deletion confirmation hangs here rather than on ``CombineView``'s root, for the reason
 /// `ListsIndex` gives: inside the navigation hierarchy and beside the rows that raise it, and
@@ -35,12 +34,14 @@ internal struct CombineIndex: View {
 	internal var body: some View {
 		List {
 			ForEach(store.summaries) { summary in
-				IndexRow(
+				IndexRowButton(
 					emoji: summary.combo.emoji,
 					name: summary.combo.name,
 					caption: summary.caption,
 					accessibilityLabel: summary.accessibilityLabel,
-				)
+				) {
+					store.send(.rowTapped(summary))
+				}
 				.swipeActions(edge: .leading) {
 					Button {
 						store.send(.editSwiped(summary))
