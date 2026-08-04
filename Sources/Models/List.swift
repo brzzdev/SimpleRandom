@@ -47,6 +47,21 @@ public struct List: Hashable, Identifiable, Sendable {
 	}
 }
 
+extension List {
+	/// The member Lists of one Combo, in no particular order.
+	///
+	/// Deduplicated by `listID`, because `IN` answers once however many ``ComboList`` rows
+	/// name the same List — the state two devices adding it offline leave behind (ADR-0008).
+	/// It is the same deduplication ``Item/inCombo(_:)`` applies to the pool, said of the
+	/// Lists rather than of their Items.
+	///
+	/// Unordered for the reason ``Item/inList(_:)`` is: the callers want different things of
+	/// it, and a caller that renders these sorts them itself.
+	public static func inCombo(_ comboID: Combo.ID) -> Where<List> {
+		Self.where { $0.id.in(ComboList.inCombo(comboID).select { $0.listID }) }
+	}
+}
+
 /// The macro generates `Draft` without carrying the conformances declared above, and every
 /// one of its fields is `Sendable` already. Features build a draft on the main actor and
 /// hand it to a database write, so this is the conformance that lets one cross.

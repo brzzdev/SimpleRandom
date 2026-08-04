@@ -155,12 +155,19 @@ let package = Package(
 		// eight targets carry none.
 		// As the other three below: everything but `Database` and the suite trait arrives
 		// through `CombineFeature`.
+		//
+		// `ListDetailFeature` and `RandomiseFeature` arrive that way too, but are named anyway:
+		// this target is where `ComboDetail`'s pooled draw and its push of the real `ListDetail`
+		// are exercised, and it `@testable`-imports both for the `DebugSnapshot` types. A
+		// dependency a test target imports directly is one it should declare.
 		.testTarget(
 			name: "CombineFeatureTests",
 			dependencies: [
 				"CombineFeature",
 				"Database",
 				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
+				"ListDetailFeature",
+				"RandomiseFeature",
 			],
 		),
 		// `DependenciesTestSupport` carries the suite trait that hands each test case its own

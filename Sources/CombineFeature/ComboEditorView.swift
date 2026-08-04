@@ -142,29 +142,6 @@ public struct ComboEditorView: View {
 	private var newTitle: Text { Text("New Combo", bundle: #bundle) }
 }
 
-extension ListOption {
-	/// What a checklist row reads: `4 items`, or `No items`.
-	///
-	/// Empty Lists are shown and are selectable — there is no minimum, and a List you are
-	/// about to fill is a reasonable thing to add (ADR-0020) — so the zero case is spelled
-	/// out rather than left to inflect into "0 items".
-	internal var caption: Text {
-		itemCount == 0
-			? Text("No items", bundle: #bundle)
-			: Text("^[\(itemCount) items](inflect: true)", bundle: #bundle)
-	}
-
-	/// What VoiceOver reads: `Lunch, 4 items`, plus the **Selected** trait when ticked.
-	///
-	/// Authored separately from ``caption`` rather than derived from it, because the spoken
-	/// separator is a comma and the name is inside the phrase rather than beside it.
-	internal var accessibilityLabel: Text {
-		itemCount == 0
-			? Text("\(list.name), No items", bundle: #bundle)
-			: Text("\(list.name), ^[\(itemCount) items](inflect: true)", bundle: #bundle)
-	}
-}
-
 extension DrawMode {
 	/// The user's word for each mode. `independent` is the schema's word and is never shown:
 	/// "Plain" is what the Deck it sits opposite makes it mean.

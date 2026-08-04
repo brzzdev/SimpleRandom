@@ -57,3 +57,52 @@ public struct IndexRow: View {
 		.accessibilityLabel(accessibilityLabel)
 	}
 }
+
+/// An ``IndexRow`` the whole width of which is the tap target — what a row that pushes
+/// something is.
+///
+/// Every row in the app that opens a screen is this: the Lists index, the Combine index, and
+/// a Combo's member rows. Rows that do *not* push — the Combo form's checklist, whose row
+/// carries a checkmark and a selection trait — build their own `Button` around a bare
+/// ``IndexRow`` instead, which is why being tappable is a wrapper rather than something
+/// `IndexRow` decides.
+///
+/// The `.plain` style and the `.contentShape` are the whole of it, and having them in one
+/// place is the point: `.plain` hit-tests the label's drawn content, so without the shape the
+/// tap target is the glyphs and a short name leaves most of the row dead. That is a fiddly
+/// fact about two modifiers, and it was written out at each call site until this existed.
+public struct IndexRowButton: View {
+	private let accessibilityLabel: Text
+	private let action: () -> Void
+	private let caption: Text
+	private let emoji: String?
+	private let name: String
+
+	public init(
+		emoji: String?,
+		name: String,
+		caption: Text,
+		accessibilityLabel: Text,
+		action: @escaping () -> Void,
+	) {
+		self.accessibilityLabel = accessibilityLabel
+		self.action = action
+		self.caption = caption
+		self.emoji = emoji
+		self.name = name
+	}
+
+	public var body: some View {
+		Button(action: action) {
+			IndexRow(
+				emoji: emoji,
+				name: name,
+				caption: caption,
+				accessibilityLabel: accessibilityLabel,
+			)
+			// On the label rather than the `Button`, since the label is what `.plain` tests.
+			.contentShape(.rect)
+		}
+		.buttonStyle(.plain)
+	}
+}

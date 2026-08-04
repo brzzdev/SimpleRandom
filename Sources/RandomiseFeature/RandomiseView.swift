@@ -14,7 +14,12 @@ internal import Models
 /// No Done, no Close and no toolbar — drag is the only way out. Nothing surrounds the result
 /// on the Lists path either: not the List name, not the pool size, not a counter. A counter
 /// was built as a prototype and rejected as scoreboard language for something that is not a
-/// game (ADR-0017); the Combine path's one secondary line arrives with #24.
+/// game (ADR-0017).
+///
+/// The Combine path is the one exception, and it is not decoration: a `subheadline`-sized
+/// secondary line above the result names the List it came from, because draw results are not
+/// persisted and duplicate Items are not deduplicated — "Pizza" from Lunch and "Pizza" from
+/// Dinner are otherwise the same sheet (#24).
 ///
 /// A Deck re-rolled past its last card replaces the result with "That's the whole deck" and
 /// **Again** with **Reshuffle**, in the same positions. This is the only way to that screen:
@@ -30,7 +35,13 @@ public struct RandomiseView: View {
 	public var body: some View {
 		VStack(spacing: 16) {
 			Spacer(minLength: 0)
-			result
+			// Closer to the result than the button is, because it belongs to it: the source line
+			// and the title are one answer — "Pizza, from Lunch" — rather than two things that
+			// happen to be stacked.
+			VStack(spacing: 8) {
+				source
+				result
+			}
 			Spacer(minLength: 0)
 			// One position, one button, and the two things it can be. **Reshuffle** is what an
 			// exhausted Deck offers where **Again** would otherwise be — the same flag picks the
@@ -72,9 +83,16 @@ public struct RandomiseView: View {
 	/// presented sheet — so **Again** would otherwise be silent to VoiceOver rather than
 	/// merely ambiguous (ADR-0017).
 	///
-	/// The Item's title alone on the Lists path. It posts from the view rather than as an
-	/// effect from the reducer: an announcement is a UI-layer acknowledgement, and the test
-	/// suite should not gain a seam that only ever tests its own mock.
+	/// The Item's title alone on the Lists path, and `Pizza, from Lunch` on the Combine one —
+	/// one catalogue entry, `%@, from %@`, rather than two fragments joined here (ADR-0022).
+	/// Provenance travels in the announcement because on a re-roll it is the only channel
+	/// carrying it, and the source List's **emoji is excluded**: VoiceOver reads it by its CLDR
+	/// name, which would put "sandwich" in front of the only word that disambiguates
+	/// (ADR-0018).
+	///
+	/// It posts from the view rather than as an effect from the reducer: an announcement is a
+	/// UI-layer acknowledgement, and the test suite should not gain a seam that only ever tests
+	/// its own mock.
 	///
 	/// An exhausted Deck announces too, and it is the one case that speaks a string of the
 	/// app's rather than the user's: the result element it replaces has ceased to exist, so
@@ -86,8 +104,15 @@ public struct RandomiseView: View {
 			spoken = AttributedString(localized: "That's the whole deck", bundle: #bundle)
 
 		case .item(let item):
-			// The user's own text, never a catalogue lookup.
-			spoken = AttributedString(item.title)
+			// Both halves are the user's own text and enter the phrase as `%@`; only the phrase
+			// itself is looked up. The names are lifted out rather than interpolated in place, as
+			// ``exhausted`` explains.
+			if let sourceName = store.sourceList?.name {
+				let title = item.title
+				spoken = AttributedString(localized: "\(title), from \(sourceName)", bundle: #bundle)
+			} else {
+				spoken = AttributedString(item.title)
+			}
 
 		case nil:
 			return
@@ -133,6 +158,32 @@ public struct RandomiseView: View {
 			// An empty pool that is not a Deck's, which the pinned bar's disabled state means
 			// the user cannot reach.
 			EmptyView()
+		}
+	}
+
+	/// Where the result came from: the source List's emoji and name, above the title, on the
+	/// Combine path only.
+	///
+	/// Nothing on the Lists path, where ``RandomiseFeature/State/sourceList`` is `nil` — the
+	/// result has one possible source and naming it would be chrome over a sheet that has none.
+	/// Nothing for an exhausted Deck either, which is showing no Item.
+	///
+	/// The emoji is hidden from VoiceOver, as row emoji are everywhere: it decorates the name
+	/// beside it, and it would be read by its CLDR name in front of the word that actually
+	/// disambiguates (ADR-0018).
+	@ViewBuilder private var source: some View {
+		if let list = store.sourceList {
+			HStack(spacing: 4) {
+				if let emoji = list.emoji {
+					Text(verbatim: emoji)
+						.accessibilityHidden(true)
+				}
+				// The List's own name, so `verbatim`.
+				Text(verbatim: list.name)
+			}
+			.font(.subheadline)
+			.foregroundStyle(.secondary)
+			.multilineTextAlignment(.center)
 		}
 	}
 

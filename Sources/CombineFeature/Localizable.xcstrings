@@ -45,6 +45,17 @@
         }
       }
     },
+    "Add a List to randomise": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a List to randomise"
+          }
+        }
+      }
+    },
     "Cancel": {
       "extractionState": "manual",
       "localizations": {
@@ -276,6 +287,17 @@
         }
       }
     },
+    "Tap Edit to change which Lists are in this Combo.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap Edit to change which Lists are in this Combo."
+          }
+        }
+      }
+    },
     "The Lists in it are kept. This happens on your other devices too.": {
       "extractionState": "manual",
       "localizations": {
@@ -283,6 +305,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "The Lists in it are kept. This happens on your other devices too."
+          }
+        }
+      }
+    },
+    "The Lists in this Combo have no items": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Lists in this Combo have no items"
           }
         }
       }
@@ -305,6 +338,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "^[%lld Lists](inflect: true) · ^[%lld items](inflect: true)"
+          }
+        }
+      }
+    },
+    "^[%lld items](inflect: true)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "^[%lld items](inflect: true)"
           }
         }
       }

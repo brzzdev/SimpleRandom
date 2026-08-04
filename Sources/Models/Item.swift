@@ -49,6 +49,23 @@ public struct Item: Hashable, Identifiable, Sendable {
 }
 
 extension Item {
+	/// Every Item of every member List of one Combo — a Combo's whole pool, in no particular
+	/// order.
+	///
+	/// **Membership is deduplicated by `listID`; the Items are not.** `IN` over the
+	/// membership's `listID`s does the first: no `UNIQUE` is available outside the primary
+	/// key, so two devices adding the same List offline leave two ``ComboList`` rows, and a
+	/// join would pool that List's Items twice and silently double its weight (ADR-0008). The
+	/// same text in two *different* member Lists stays two entries and two chances, exactly as
+	/// within one List (ADR-0004).
+	///
+	/// Member Lists' own ``drawMode`` and ``ListDraw`` rows are not consulted here or
+	/// anywhere else on this path: a Combo pools every Item of every member, including ones
+	/// already dealt within their own List (ADR-0007).
+	public static func inCombo(_ comboID: Combo.ID) -> Where<Item> {
+		Self.where { $0.listID.in(ComboList.inCombo(comboID).select { $0.listID }) }
+	}
+
 	/// The Items of one List, in no particular order — the whole of what a plain List draws
 	/// over, and where every other scoped query starts.
 	public static func inList(_ listID: List.ID) -> Where<Item> {

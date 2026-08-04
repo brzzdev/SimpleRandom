@@ -36,6 +36,9 @@ public struct CombineView: View {
 				// empty state below says what to do instead (ADR-0020).
 				.disabled(store.listCount == 0)
 			}
+			.navigationDestination(item: $store.scope(\.detail, action: \.detail)) { detailStore in
+				ComboDetailView(store: detailStore)
+			}
 		}
 		.sheet(item: $store.scope(\.destination, action: \.destination).editor) { editorStore in
 			ComboEditorView(store: editorStore)

@@ -59,6 +59,11 @@ public struct CombineFeature {
 	public struct State {
 		public var destination: Destination.State?
 
+		/// The Combo pushed off the index. Its own optional rather than a third case of
+		/// ``Destination``, because a push and a sheet are not mutually exclusive — and it is
+		/// what carries the two levels below it (ADR-0013).
+		public var detail: ComboDetail.State?
+
 		/// How many Lists exist at all, which is what `+` and the second empty state are
 		/// gated on — there is nothing to combine until there is something to combine
 		/// (ADR-0020).
@@ -75,8 +80,10 @@ public struct CombineFeature {
 	public enum Action {
 		case deleteSwiped(ComboSummary)
 		case destination(Destination.Action)
+		case detail(ComboDetail.Action)
 		case editSwiped(ComboSummary)
 		case newComboButtonTapped
+		case rowTapped(ComboSummary)
 	}
 
 	public init() {}
@@ -102,6 +109,9 @@ public struct CombineFeature {
 			case .destination:
 				break
 
+			case .detail:
+				break
+
 			case .editSwiped(let summary):
 				// The draft carries the id, and the form reads its own membership off it: the
 				// index renders counts, so the join table is not its to hold.
@@ -115,9 +125,16 @@ public struct CombineFeature {
 				state.destination = .editor(
 					ComboEditor.State(draft: Combo.Draft(createdAt: now, name: ""))
 				)
+
+			case .rowTapped(let summary):
+				// The Combo alone. The counts the row was rendering are the index's arithmetic, and
+				// the screen this pushes reads its members — and its own copy of the Combo —
+				// through queries of its own.
+				state.detail = ComboDetail.State(combo: summary.combo)
 			}
 		}
 		.ifLet(\.destination, action: \.destination) { Destination.body }
+		.ifLet(\.detail, action: \.detail) { ComboDetail() }
 	}
 
 	/// Deletes a Combo and, through the schema's cascades, its memberships and its draw rows.
