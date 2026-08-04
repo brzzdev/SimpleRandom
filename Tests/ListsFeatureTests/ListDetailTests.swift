@@ -233,6 +233,9 @@ internal struct ListDetailTests {
 					pool: [pizza],
 					result: .item(pizza),
 					scope: .list(lunch),
+					// Empty on the Lists path: a List's result has one possible source, and the
+					// sheet says nothing about provenance.
+					sourceLists: [],
 				)
 			)
 		}
@@ -269,6 +272,9 @@ internal struct ListDetailTests {
 					pool: [pizza],
 					result: .item(pizza),
 					scope: .list(lunch),
+					// Empty on the Lists path: a List's result has one possible source, and the
+					// sheet says nothing about provenance.
+					sourceLists: [],
 				)
 			)
 		}
