@@ -315,6 +315,156 @@ internal struct CombineFeatureTests {
 		#expect(rows[1].createdAt == .seed)
 	}
 
+	// MARK: - Membership changed on another device while the form is open
+
+	@Test
+	internal func aMembershipAddedElsewhereSurvivesAnUnrelatedSave() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+
+				Models.List.films
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-2), title: "Heat")
+
+				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+			}
+		}
+		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = ComboSummary.seeded(id: UUID(-1), itemCount: 1, listCount: 1)
+
+		store.send(.editSwiped(summary)) {
+			$0.destination = .editor(
+				.editing(
+					Combo.Draft(summary.combo),
+					options: [
+						ListOption(itemCount: 1, list: .lunch),
+						ListOption(itemCount: 1, list: .films),
+					],
+					ticked: [.lunchOf(UUID(-1), createdAt: .seed)],
+				)
+			)
+		}
+
+		// Another iPhone adds Films while the form sits open. Not a gesture this screen owns.
+		try await database.write { db in
+			try db.seed {
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .later, listID: UUID(-2))
+			}
+		}
+
+		// The user renames the Combo and nothing else — neither delta set mentions a List.
+		store.modify {
+			$0.destination.modify(\.editor) { $0.draft.name = "Movie night" }
+		}
+		#expect(store.destination?.editor?.ticked.isEmpty == true)
+		#expect(store.destination?.editor?.unticked.isEmpty == true)
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
+
+		// Films survives. Under a selection snapshot taken when the form opened, saving the
+		// rename would have deleted it — a membership this sitting never saw. Asserted against
+		// the database rather than the index, because it is the write that was wrong.
+		#expect(try await memberships().map(\.listID) == [UUID(-1), UUID(-2)])
+		#expect(try await combos().map(\.name) == ["Movie night"])
+
+		try await reloadIndex(store)
+		store.expect {
+			$0.destination = nil
+			$0.summaries = [.seeded(id: UUID(-1), itemCount: 2, listCount: 2, name: "Movie night")]
+		}
+	}
+
+	@Test
+	internal func aMembershipRemovedElsewhereIsNotRecreated() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+
+				Models.List.films
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-2), title: "Heat")
+
+				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .later, listID: UUID(-2))
+			}
+		}
+		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = ComboSummary.seeded(id: UUID(-1), itemCount: 2, listCount: 2)
+
+		store.send(.editSwiped(summary)) {
+			$0.destination = .editor(
+				.editing(
+					Combo.Draft(summary.combo),
+					options: [
+						ListOption(itemCount: 1, list: .lunch),
+						ListOption(itemCount: 1, list: .films),
+					],
+					ticked: [
+						.lunchOf(UUID(-1), createdAt: .seed),
+						ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .later, listID: UUID(-2)),
+					],
+				)
+			)
+		}
+
+		// The other iPhone drops Films instead.
+		try await database.write { db in
+			try ComboList.find(UUID(-2)).delete().execute(db)
+		}
+
+		store.modify {
+			$0.destination.modify(\.editor) { $0.draft.name = "Movie night" }
+		}
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
+
+		// Saving does not put it back. A snapshot taken when the form opened still held Films,
+		// so it would have reinserted the row the other device had just deleted.
+		#expect(try await memberships().map(\.listID) == [UUID(-1)])
+
+		try await reloadIndex(store)
+		store.expect {
+			$0.destination = nil
+			$0.summaries = [.seeded(id: UUID(-1), itemCount: 1, listCount: 1, name: "Movie night")]
+		}
+	}
+
+	@Test
+	internal func aTickedListDeletedElsewhereLeavesNothingTickedOnScreen() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+			}
+		}
+
+		// The form's state on its own, with no store around it: what is under test is the two
+		// properties the `Lists` footer chooses between, and driving a live query to refresh
+		// underneath a `TestStore` would be testing the observation rather than the choice.
+		var state = ComboEditor.State(draft: Combo.Draft(createdAt: .seed, name: "Friday night"))
+		#expect(state.options.map(\.list.name) == ["Lunch"])
+
+		state.ticked = [UUID(-1)]
+		#expect(state.selectedOptions.map(\.id) == [UUID(-1)])
+		#expect(state.poolCount == 1)
+
+		// The other iPhone deletes the List this form has ticked.
+		try await database.write { db in
+			try Models.List.find(UUID(-1)).delete().execute(db)
+		}
+		try await state.$options.load()
+		#expect(state.options.isEmpty)
+
+		// The tick survives in the delta — the user did ask for it, and the form does not
+		// quietly edit their input — but nothing on the checklist can show it.
+		#expect(state.selectedListIDs == [UUID(-1)])
+		// So the footer reads "Pick the Lists to draw from." rather than "0 items in the pool."
+		// over a checklist with nothing ticked on it. This is the branch the view takes.
+		#expect(state.selectedOptions.isEmpty)
+		#expect(state.poolCount == 0)
+	}
+
 	// MARK: - The deduplicated pool
 
 	@Test
