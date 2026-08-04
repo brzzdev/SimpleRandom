@@ -214,7 +214,7 @@ Twelve targets. `ListDetailFeature` is extracted for the same reason `RandomiseF
 
 Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `Components`, `ListDetailFeature`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`, and `ListDetail`'s behaviour is exercised through `ListsFeatureTests`. `CombineFeature` does not depend on `ListsFeature`: its List checklist reads `Models.List` through its own `@FetchAll`.
 
-Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies` and `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin). The last is named only so `ListsFeature` may import `SwiftUINavigation` for `alert(item:)`, whose single-optional form SwiftUI has no equivalent of; TCA26 already brings the package, so the resolved graph is unchanged. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
+Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies` and `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin). The last is named only so `ListsFeature` and `CombineFeature` may import `SwiftUINavigation` for `alert(item:)`, whose single-optional form SwiftUI has no equivalent of — both indexes raise a delete confirmation off one optional child state; TCA26 already brings the package, so the resolved graph is unchanged. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
 
 ### Composition
 
@@ -411,11 +411,14 @@ This deliberately departs from the convention in the sibling apps, which put one
 
 | Kind | Entry |
 | --- | --- |
-| Lists index row, Deck | `%@ · Deck · %lld of %lld left` |
+| Lists index row, Deck | `Deck · %lld of %lld left` |
 | Lists index row, VoiceOver | `%@, Deck, %lld of %lld left` |
-| Combine index row, Deck | `%@ · ^[%lld Lists](inflect: true) · Deck · %lld of %lld left` |
+| Combine index row, Deck | `^[%lld Lists](inflect: true) · Deck · %lld of %lld left` |
+| Combine index row, VoiceOver | `%@, ^[%lld Lists](inflect: true), Deck, %lld of %lld left` |
 | Item count | `^[%lld items](inflect: true)` |
 | Combine announcement | `%@, from %@` |
+
+**A visible caption carries no `%@` for the name; its spoken twin does.** The row renders the name beside the caption rather than inside it — see `Components.IndexRow` — whereas the accessibility label is one phrase and has to hold both.
 
 A join is the one construction that cannot be translated: the translator receives fragments and no control over word order, and the separator — `·` in visible captions, a comma in spoken labels — is a punctuation decision made in code by someone thinking in English. Roughly fourteen entries once the plain and Deck variants and the pinned bar's three disabled prompts are counted, which is a small price for the phrase being the unit.
 

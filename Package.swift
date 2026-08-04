@@ -153,9 +153,8 @@ let package = Package(
 		),
 		// Four test targets, chosen by risk rather than by symmetry (ADR-0019). The other
 		// eight targets carry none.
-		// As the others: `DependenciesTestSupport` carries the suite trait that hands each test
-		// case its own in-memory database, and `Database` is what builds one. Everything else
-		// — `Models`, `SQLiteData`, ComposableArchitecture2 — arrives through `CombineFeature`.
+		// As the other three below: everything but `Database` and the suite trait arrives
+		// through `CombineFeature`.
 		.testTarget(
 			name: "CombineFeatureTests",
 			dependencies: [

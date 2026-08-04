@@ -350,8 +350,7 @@ internal struct CombineFeatureTests {
 			]
 		)
 
-		// And the form ticks it once, so reopening and saving collapses the duplicate rather
-		// than carrying it forward.
+		// And the form ticks it once, because a `Set` is what it holds the selection in.
 		let summary = try #require(store.summaries.first)
 		store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
@@ -364,15 +363,21 @@ internal struct CombineFeatureTests {
 		}
 		#expect(store.destination?.editor?.poolCount == 2)
 
-		// Saving keeps the oldest of the two rows and drops the other, so the next save is the
-		// last place the duplicate exists rather than the first of many.
+		// Saving leaves both rows exactly where they are. Deduplication belongs in the pool,
+		// which is where ADR-0008 puts it — a save that collapsed them would be issuing a hard,
+		// global delete of a row another device authored, which nobody asked this form to do.
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
-		let rows = try await memberships()
-		store.expect {
-			$0.destination = nil
-			$0.memberships = rows
-		}
-		#expect(rows == [ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))])
+		try await reloadIndex(store)
+		store.expect { $0.destination = nil }
+		#expect(
+			try await memberships() == [
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1)),
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .later, listID: UUID(-1)),
+			]
+		)
+		// And the caption still reads `1 List`, which is the whole point of the deduplication
+		// being a property of the query rather than of the rows.
+		#expect(store.summaries.map(\.listCount) == [1])
 	}
 
 	@Test

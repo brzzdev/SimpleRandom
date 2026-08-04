@@ -137,15 +137,16 @@ public struct ComboEditor {
 
 /// Upserts the Combo and reconciles its memberships to the ticked Lists.
 ///
-/// The reconciliation keeps the oldest row for each still-ticked List and deletes the rest,
+/// The reconciliation deletes what is no longer ticked and inserts what is newly ticked,
 /// rather than deleting every row and reinserting: a membership nobody touched keeps its id
 /// and its `createdAt`, so it does not resurface on every other device as a deletion
 /// followed by a fresh insert.
 ///
-/// Keeping the *oldest* is what also collapses the duplicate rows ADR-0008 accepts — two
-/// devices adding the same List offline. Leaving them would be harmless, since the pool
-/// deduplicates by `listID` when it is built; tidying them here means the next save is the
-/// last place the duplicate exists rather than the first of many.
+/// **Duplicate rows for a still-ticked List are left exactly where they are.** Two devices
+/// adding the same List offline is a legal steady state under ADR-0008, and deduplication
+/// belongs where that ADR puts it — in the pool, when it is built. Collapsing them here
+/// would mean a save issuing a hard, global delete of a row another device authored, which
+/// is not something the user asked this form to do.
 ///
 /// A free function rather than a method on ``ComboEditor``, so the database write captures
 /// the four values it needs and not the feature.
@@ -163,17 +164,13 @@ private func writeCombo(
 	let upsert = Combo.upsert { draft }.returning(\.id)
 	guard let comboID = try upsert.fetchOne(db) else { throw ComboNotSaved() }
 
-	// `(createdAt, id)` ascending, so "the oldest row" means the same row on every device.
-	let existing = try ComboList.inCombo(comboID).order { ($0.createdAt, $0.id) }.fetchAll(db)
-	var keptListIDs: Set<Models.List.ID> = []
-	var doomedIDs: [ComboList.ID] = []
-	for row in existing {
-		let isFirstOfATickedList =
-			memberListIDs.contains(row.listID) && keptListIDs.insert(row.listID).inserted
-		if !isFirstOfATickedList { doomedIDs.append(row.id) }
-	}
+	try ComboList
+		.inCombo(comboID)
+		.and(ComboList.where { $0.listID.notIn(memberListIDs) })
+		.delete()
+		.execute(db)
 
-	try ComboList.where { $0.id.in(doomedIDs) }.delete().execute(db)
+	let keptListIDs = try Set(ComboList.inCombo(comboID).select { $0.listID }.fetchAll(db))
 	for listID in memberListIDs where !keptListIDs.contains(listID) {
 		try ComboList
 			.insert { ComboList.Draft(comboID: comboID, createdAt: now, listID: listID) }
