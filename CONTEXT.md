@@ -264,7 +264,7 @@ Nothing here is bespoke. System controls in their expected places, system materi
 
 Large navigation title `Lists`, `+` the only toolbar item, pull to refresh. No reorder gesture and no search.
 
-**Rows** — emoji (or a dimmed 🎲 placeholder) · name · caption. The caption is `N items` for a plain List and `Deck · N of M left` for a Deck, so the index is where you see a Deck running down without opening it.
+**Rows** — emoji (or a 🎲 placeholder) · name · caption. The caption is `N items` for a plain List and `Deck · N of M left` for a Deck, so the index is where you see a Deck running down without opening it.
 
 **Create and edit** — `+` opens an editor sheet at a medium detent, draggable to large: name, emoji, draw mode. The same sheet renames, reached by a leading swipe. It is the sheet with the most content in the app, so it is the one that most needs somewhere to grow.
 
@@ -364,7 +364,7 @@ Provenance is in the Combine announcement because **Draw results are not persist
 
 ### Labels
 
-**Row emoji is hidden from VoiceOver everywhere.** It decorates the name it sits beside, and the dimmed 🎲 placeholder would announce "game die" on every List that has not got one. It stays audible in `EmojiField`, where it is the thing being edited rather than an ornament.
+**Row emoji is hidden from VoiceOver everywhere.** It decorates the name it sits beside, and the 🎲 placeholder would announce "game die" on every List that has not got one. It stays audible in `EmojiField`, where it is the thing being edited rather than an ornament.
 
 Spoken separators are commas, not `·`. Rows read:
 

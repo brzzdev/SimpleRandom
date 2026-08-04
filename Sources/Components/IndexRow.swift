@@ -31,11 +31,12 @@ public struct IndexRow: View {
 		// emoji against the middle of the block rather than its first line — the rarer case,
 		// traded for the misalignment that was on all of them.
 		HStack(spacing: 12) {
+			// A placeholder rather than nothing, so every row's name starts in the same place.
+			// It renders like any other emoji: the dimming that used to mark it as a placeholder
+			// read as a rendering fault against dark, and there is nothing a row gains from
+			// having its own emoji told apart from the one it was given.
 			Text(verbatim: emoji ?? "🎲")
 				.font(.title2)
-				// The placeholder is dimmed rather than absent so every row's name starts in
-				// the same place.
-				.opacity(emoji == nil ? 0.25 : 1)
 
 			VStack(alignment: .leading, spacing: 2) {
 				Text(verbatim: name)
