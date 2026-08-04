@@ -214,7 +214,7 @@ Twelve targets. `ListDetailFeature` is extracted for the same reason `RandomiseF
 
 Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `Components`, `ListDetailFeature`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`, and `ListDetail`'s behaviour is exercised through `ListsFeatureTests`. `CombineFeature` does not depend on `ListsFeature`: its List checklist reads `Models.List` through its own `@FetchAll`.
 
-Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies` and `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin). The last is named only so `ListsFeature` may import `SwiftUINavigation` for `confirmationDialog(item:)`, which SwiftUI has no form of; TCA26 already brings the package, so the resolved graph is unchanged. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
+Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies` and `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin). The last is named only so `ListsFeature` may import `SwiftUINavigation` for `alert(item:)`, whose single-optional form SwiftUI has no equivalent of; TCA26 already brings the package, so the resolved graph is unchanged. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
 
 ### Composition
 
@@ -268,7 +268,7 @@ Large navigation title `Lists`, `+` the only toolbar item, pull to refresh. No r
 
 **Create and edit** — `+` opens an editor sheet at a medium detent, draggable to large: name, emoji, draw mode. The same sheet renames, reached by a leading swipe. It is the sheet with the most content in the app, so it is the one that most needs somewhere to grow.
 
-**Delete** — trailing swipe. An empty List goes immediately; a List with Items raises a confirmation naming it, with `Delete N Items` as the destructive action and "This can't be undone, and it happens on your other devices too." as the message.
+**Delete** — trailing swipe. An empty List goes immediately; a List with Items raises an alert naming it, with `Delete N Items` as the destructive action and "This can't be undone, and it happens on your other devices too." as the message. An alert rather than a `confirmationDialog`, unlike **Delete All Lists**: a dialog anchors on what it is attached to, and the modifier has to sit on the index's `List` rather than the row — the scoped binding is nil-or-not rather than identity-matched, so on the row every row would present at once — from where it covered the title and the row it was naming.
 
 **Emoji** — a one-grapheme field opening the system emoji keyboard, keeping only the last grapheme typed. A `UIViewRepresentable`; SwiftUI has no API to force that keyboard. A curated grid was rejected as a fixed vocabulary to maintain.
 
@@ -439,7 +439,7 @@ A missing `bundle: #bundle` is **invisible in v1**. The lookup misses, SwiftUI f
 
 A SwiftLint rule therefore guards the call sites at write time. The enumerated list is the decision and lives here; the rule itself is tooling, configured by convention:
 
-`accessibilityLabel`, `AccessibilityNotification.Announcement`, `accessibilityValue`, `Button`, `confirmationDialog`, `Label`, `navigationTitle`, `Picker`, `Section`, `Text`, `Toggle`.
+`accessibilityLabel`, `AccessibilityNotification.Announcement`, `accessibilityValue`, `alert`, `Button`, `confirmationDialog`, `Label`, `navigationTitle`, `Picker`, `Section`, `Text`, `Toggle`.
 
 Reaching past `Text` is the point: `Text` is a minority of this app's strings, and **Accessibility**'s announcements — whose breakage is the hardest of all to notice, since they are silent either way — are not `Text` at all.
 

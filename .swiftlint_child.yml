@@ -42,7 +42,7 @@ custom_rules:
   # anyone makes.
   localised_string_needs_bundle:
     name: "Localised string needs a bundle"
-    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*#*"(?:[^"\\]|\\.)*"#*(?!(?:[^()]|\([^()]*\))*bundle:\s*#bundle\b)'
+    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|alert|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*#*"(?:[^"\\]|\\.)*"#*(?!(?:[^()]|\([^()]*\))*bundle:\s*#bundle\b)'
     excluded_match_kinds:
       - comment
       - doccomment
