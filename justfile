@@ -2,7 +2,7 @@
 # successful `| xcbeautify`, which would otherwise let a red build report green.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-destination := "platform=iOS Simulator,name=iPhone 17 Pro"
+destination := "platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5"
 scheme := "SimpleRandom"
 # Xcode refuses to build with a Swift macro plugin until someone has approved it in the
 # UI, and this graph brings several. There is nothing to click on a fresh clone, which is
