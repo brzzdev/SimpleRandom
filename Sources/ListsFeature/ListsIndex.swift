@@ -57,11 +57,21 @@ internal struct ListsIndex: View {
 					.tint(.blue)
 				}
 				.swipeActions {
-					Button(role: .destructive) {
+					// Deliberately not `role: .destructive`, unlike the dialog's own Delete below
+					// and the Item row's in ``ListDetailItems``. Inside `swipeActions` the role is
+					// a claim and not just a colour: SwiftUI takes it to mean the row is going and
+					// animates it out on tap without waiting to be told. This tap does not always
+					// delete — a non-empty List gets the confirmation instead — so the row would
+					// collapse and spring back while the question was still being asked. The red
+					// is still right, and is asked for directly the way Edit asks for its blue:
+					// the swipe leads to a hard, global delete, and the dialog is what makes that
+					// safe rather than the colour.
+					Button {
 						store.send(.deleteSwiped(summary))
 					} label: {
 						Label { Text("Delete", bundle: #bundle) } icon: { Image(systemName: "trash") }
 					}
+					.tint(.red)
 				}
 			}
 		}
