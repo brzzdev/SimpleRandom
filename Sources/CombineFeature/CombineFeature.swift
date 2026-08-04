@@ -67,19 +67,6 @@ public struct CombineFeature {
 		/// and this screen renders no List.
 		@FetchOne(Models.List.select { $0.id.count() }) internal var listCount = 0
 
-		/// Every membership, held only to seed the form when a row is edited.
-		///
-		/// The form needs the Combo's current members the instant the swipe lands, and a
-		/// scoped query cannot be run from inside a reducer without going async and leaving
-		/// the sheet up in front of a half-built state. So the index keeps the join table —
-		/// a handful of rows per Combo, and one query rather than one per edit — and hands
-		/// the relevant ids over.
-		///
-		/// `(createdAt, id)` ascending like everything else, so a reload cannot reshuffle the
-		/// rows underneath an exhaustive assertion.
-		@FetchAll(ComboList.all.order { ($0.createdAt, $0.id) })
-		internal var memberships: [ComboList]
-
 		@FetchAll(ComboSummary.index) internal var summaries: [ComboSummary]
 
 		public init() {}
@@ -116,12 +103,9 @@ public struct CombineFeature {
 				break
 
 			case .editSwiped(let summary):
-				state.destination = .editor(
-					ComboEditor.State(
-						draft: Combo.Draft(summary.combo),
-						selectedListIDs: state.memberListIDs(of: summary.id),
-					)
-				)
+				// The draft carries the id, and the form reads its own membership off it: the
+				// index renders counts, so the join table is not its to hold.
+				state.destination = .editor(ComboEditor.State(draft: Combo.Draft(summary.combo)))
 
 			case .newComboButtonTapped:
 				@Dependency(\.date.now) var now
@@ -148,14 +132,5 @@ public struct CombineFeature {
 				}
 			}
 		}
-	}
-}
-
-extension CombineFeature.State {
-	/// The Lists one Combo currently holds, deduplicated — two devices adding the same List
-	/// offline leave two rows for it, and a form that reopened with it ticked twice would
-	/// have nothing to say about the second (ADR-0008).
-	internal func memberListIDs(of comboID: Combo.ID) -> Set<Models.List.ID> {
-		Set(memberships.lazy.filter { $0.comboID == comboID }.map(\.listID))
 	}
 }

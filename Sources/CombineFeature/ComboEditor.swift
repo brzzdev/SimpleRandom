@@ -30,12 +30,24 @@ public struct ComboEditor {
 	public struct State {
 		public var draft: Combo.Draft
 
+		/// What this Combo already holds, and the whole of what seeds ``selectedListIDs``.
+		///
+		/// Built in `init` rather than declared on the property the way the index's reads are,
+		/// for the reason `ListDetail`'s is: the query is scoped to one Combo, and the id only
+		/// exists once there is a draft to read it from. A new Combo has no id yet, so it
+		/// matches on the empty `IN ()` SQLite permits — nothing, which is exactly right.
+		@FetchAll internal var memberships: [ComboList]
+
 		/// Every List, with its Item count — the checklist, live, so a List made on another
 		/// device while the form is open appears in it.
 		@FetchAll(ListOption.all) internal var options: [ListOption]
 
 		/// The ticked Lists. A `Set`, so the form itself can never hold a List twice — the
-		/// duplicate rows ADR-0008 accepts come from two devices, not from here.
+		/// duplicate rows ADR-0008 accepts come from two devices, not from here, and reopening
+		/// a Combo that has them ticks its List once.
+		///
+		/// Seeded from ``memberships`` and then owned by the user: this is a draft like the
+		/// name beside it, and nothing exists until Save.
 		public var selectedListIDs: Set<Models.List.ID>
 
 		/// Trimmed and non-empty is the rule for a name; this is where it is enforced, and
@@ -47,27 +59,32 @@ public struct ComboEditor {
 		/// What the `Lists` footer counts: the Items the Combo would pool as it currently
 		/// stands.
 		///
-		/// Deduplicated by construction — ``selectedListIDs`` is a `Set` and each ``ListOption``
-		/// appears once — so this agrees with the count `ComboSummary` will select back out of
-		/// the database once the form is saved.
+		/// Deduplicated by construction — ``selectedOptions`` comes off a `Set` and each
+		/// ``ListOption`` appears once — so this agrees with the count `ComboSummary` will
+		/// select back out of the database once the form is saved.
 		public var poolCount: Int {
-			options.reduce(0) { total, option in
-				selectedListIDs.contains(option.id) ? total + option.itemCount : total
-			}
+			selectedOptions.reduce(0) { $0 + $1.itemCount }
 		}
 
-		/// The ticked Lists in the app's one sort order, and the whole of what Save writes.
+		/// The ticked Lists in the app's one sort order — what the footer counts, and what
+		/// Save writes.
 		///
 		/// Ordered through ``options`` rather than by sorting the ids, so membership rows are
 		/// created in the order the checklist shows them. It also drops any id whose List has
 		/// gone since the form opened, which would otherwise fail the foreign key.
-		internal var selectedListIDsInOrder: [Models.List.ID] {
-			options.lazy.map(\.id).filter(selectedListIDs.contains)
+		internal var selectedOptions: [ListOption] {
+			options.filter { selectedListIDs.contains($0.id) }
 		}
 
-		public init(draft: Combo.Draft, selectedListIDs: Set<Models.List.ID> = []) {
+		public init(draft: Combo.Draft) {
 			self.draft = draft
-			self.selectedListIDs = selectedListIDs
+			let comboIDs = draft.id.map { [$0] } ?? []
+			_memberships = FetchAll(ComboList.where { $0.comboID.in(comboIDs) })
+			// Empty first and then seeded, because reading `memberships` goes through `self`
+			// and Swift will not lend it out until every stored property has a value. The
+			// query above has already run by then — a `@FetchAll` fetches as it is built.
+			selectedListIDs = []
+			selectedListIDs = Set(memberships.map(\.listID))
 		}
 	}
 
@@ -109,7 +126,7 @@ public struct ComboEditor {
 				var edited = state.draft
 				edited.name = edited.name.trimmedForStorage
 				let draft = edited
-				let listIDs = state.selectedListIDsInOrder
+				let listIDs = state.selectedOptions.map(\.id)
 
 				@Dependency(\.date.now) var now
 				@Dependency(\.defaultDatabase) var database
@@ -171,11 +188,12 @@ private func writeCombo(
 		.execute(db)
 
 	let keptListIDs = try Set(ComboList.inCombo(comboID).select { $0.listID }.fetchAll(db))
-	for listID in memberListIDs where !keptListIDs.contains(listID) {
-		try ComboList
-			.insert { ComboList.Draft(comboID: comboID, createdAt: now, listID: listID) }
-			.execute(db)
-	}
+	let added = memberListIDs
+		.filter { !keptListIDs.contains($0) }
+		.map { ComboList.Draft(comboID: comboID, createdAt: now, listID: $0) }
+	guard !added.isEmpty else { return }
+	// One statement for the lot, rather than a prepare and a step per newly-ticked List.
+	try ComboList.insert { added }.execute(db)
 }
 
 /// An upsert that wrote no row, which SQLite does not do — but `RETURNING` is typed as

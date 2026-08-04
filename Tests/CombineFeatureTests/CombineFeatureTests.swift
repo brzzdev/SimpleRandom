@@ -64,13 +64,13 @@ internal struct CombineFeatureTests {
 		// its own Item count.
 		store.send(.newComboButtonTapped) {
 			$0.destination = .editor(
-				ComboEditor.State.DebugSnapshot(
-					draft: Combo.Draft(createdAt: .seed, name: ""),
+				.editing(
+					Combo.Draft(createdAt: .seed, name: ""),
 					options: [
 						ListOption(itemCount: 2, list: .lunch),
 						ListOption(itemCount: 1, list: .films),
 					],
-					selectedListIDs: [],
+					ticked: [],
 				)
 			)
 		}
@@ -111,7 +111,6 @@ internal struct CombineFeatureTests {
 		try await reloadIndex(store)
 		store.expect {
 			$0.destination = nil
-			$0.memberships = rows
 			$0.summaries = [
 				ComboSummary(
 					combo: Combo(id: comboID, createdAt: .seed, emoji: "🍿", name: "Friday night"),
@@ -134,10 +133,10 @@ internal struct CombineFeatureTests {
 
 		store.send(.newComboButtonTapped) {
 			$0.destination = .editor(
-				ComboEditor.State.DebugSnapshot(
-					draft: Combo.Draft(createdAt: .seed, name: ""),
+				.editing(
+					Combo.Draft(createdAt: .seed, name: ""),
 					options: [ListOption(itemCount: 0, list: .lunch)],
-					selectedListIDs: [],
+					ticked: [],
 				)
 			)
 		}
@@ -166,10 +165,10 @@ internal struct CombineFeatureTests {
 
 		store.send(.newComboButtonTapped) {
 			$0.destination = .editor(
-				ComboEditor.State.DebugSnapshot(
-					draft: Combo.Draft(createdAt: .seed, name: ""),
+				.editing(
+					Combo.Draft(createdAt: .seed, name: ""),
 					options: [],
-					selectedListIDs: [],
+					ticked: [],
 				)
 			)
 		}
@@ -214,13 +213,13 @@ internal struct CombineFeatureTests {
 		// home for membership rather than one of two (ADR-0020).
 		store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
-				ComboEditor.State.DebugSnapshot(
-					draft: Combo.Draft(summary.combo),
+				.editing(
+					Combo.Draft(summary.combo),
 					options: [
 						ListOption(itemCount: 1, list: .lunch),
 						ListOption(itemCount: 2, list: .films),
 					],
-					selectedListIDs: [UUID(-1)],
+					ticked: [.lunchOf(UUID(-1), createdAt: .seed)],
 				)
 			)
 		}
@@ -245,7 +244,6 @@ internal struct CombineFeatureTests {
 		try await reloadIndex(store)
 		store.expect {
 			$0.destination = nil
-			$0.memberships = rows
 			$0.summaries = [
 				ComboSummary(
 					combo: Combo(
@@ -278,13 +276,13 @@ internal struct CombineFeatureTests {
 
 		store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
-				ComboEditor.State.DebugSnapshot(
-					draft: Combo.Draft(summary.combo),
+				.editing(
+					Combo.Draft(summary.combo),
 					options: [
 						ListOption(itemCount: 0, list: .lunch),
 						ListOption(itemCount: 0, list: .films),
 					],
-					selectedListIDs: [UUID(-1)],
+					ticked: [.lunchOf(UUID(-1), createdAt: .earlier)],
 				)
 			)
 		}
@@ -300,7 +298,6 @@ internal struct CombineFeatureTests {
 		try await reloadIndex(store)
 		store.expect {
 			$0.destination = nil
-			$0.memberships = rows
 			$0.summaries = [.seeded(id: UUID(-1), listCount: 2)]
 		}
 		#expect(rows.count == 2)
@@ -354,10 +351,14 @@ internal struct CombineFeatureTests {
 		let summary = try #require(store.summaries.first)
 		store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
-				ComboEditor.State.DebugSnapshot(
-					draft: Combo.Draft(summary.combo),
+				.editing(
+					Combo.Draft(summary.combo),
+					// Both rows arrive; the `Set` the form derives from them ticks Lunch once.
 					options: [ListOption(itemCount: 2, list: .lunch)],
-					selectedListIDs: [UUID(-1)],
+					ticked: [
+						.lunchOf(UUID(-1), createdAt: .seed),
+						.lunchOf(UUID(-2), createdAt: .later),
+					],
 				)
 			)
 		}
@@ -549,11 +550,6 @@ extension CombineFeatureTests {
 	/// A write the feature makes reaches those properties through a database observation,
 	/// which arrives on its own schedule. Waiting on the write's task is not enough, so this
 	/// makes the refresh the test asserts against a thing the test asked for.
-	///
-	/// `memberships` is deliberately not reloaded. Nothing renders it — it exists only to seed
-	/// the form when a row is edited — and refreshing it would put a set of database-minted
-	/// ids into every exhaustive assertion that follows a save, none of which are what the
-	/// test is about. The tests that care read the join table directly, with ``memberships()``.
 	private func reloadIndex(_ store: TestStore<CombineFeature>) async throws {
 		try await store.state.$listCount.load()
 		try await store.state.$summaries.load()
@@ -605,6 +601,36 @@ extension ComboSummary {
 			dealtCount: 0,
 			itemCount: itemCount,
 			listCount: listCount,
+		)
+	}
+}
+
+extension ComboList {
+	/// A seeded membership of Lunch in the one Combo these worlds build, so a test writes the
+	/// row's own identity and nothing it shares with every other row.
+	fileprivate static func lunchOf(_ id: ComboList.ID, createdAt: Date) -> Self {
+		ComboList(id: id, comboID: UUID(-1), createdAt: createdAt, listID: UUID(-1))
+	}
+}
+
+extension ComboEditor.State.DebugSnapshot {
+	/// The form as it opens: a draft, the checklist the database answers with, and the Lists
+	/// already ticked.
+	///
+	/// `options` and `memberships` are spelled out at every call site rather than defaulted.
+	/// The snapshot's own default for a `@FetchAll` is a lazy `_snapshotType`, which traps the
+	/// moment the comparison reads it — so a fetched property in an expected state is supplied
+	/// or it takes the test process down.
+	fileprivate static func editing(
+		_ draft: Combo.Draft,
+		options: [ListOption],
+		ticked memberships: [ComboList] = [],
+	) -> Self {
+		ComboEditor.State.DebugSnapshot(
+			draft: draft,
+			memberships: memberships,
+			options: options,
+			selectedListIDs: Set(memberships.map(\.listID)),
 		)
 	}
 }
