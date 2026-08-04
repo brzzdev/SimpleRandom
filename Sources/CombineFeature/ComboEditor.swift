@@ -13,6 +13,19 @@ internal import Dependencies
 internal import IssueReporting
 internal import SQLiteData
 
+/// What the form's `Lists` section says beneath the checklist.
+///
+/// A value rather than a branch in the view, so the choice between the two sentences is
+/// state — see ``ComboEditor/State/poolFooter``. The view renders whichever case it is
+/// handed and decides nothing.
+public enum PoolFooter: Hashable, Sendable {
+	/// `12 items in the pool.` — what the ticked Lists come to.
+	case pool(count: Int)
+
+	/// `Pick the Lists to draw from.` — nothing on the checklist is ticked.
+	case prompt
+}
+
 /// The one form a Combo is built in: name, emoji, draw mode **and** its membership, over a
 /// `Combo.Draft` and a set of ticked List ids.
 ///
@@ -73,23 +86,31 @@ public struct ComboEditor {
 		/// block building a Combo up one List at a time.
 		public var isSavable: Bool { !draft.name.trimmedForStorage.isEmpty }
 
-		/// What the `Lists` footer counts: the Items the Combo would pool as it currently
-		/// stands.
+		/// What the `Lists` section's footer says.
+		///
+		/// **The decision lives here rather than in the view**, so the thing that chooses
+		/// between the two sentences is the thing a test can assert. Branching in the view put
+		/// the choice somewhere only a running screen could check, and it was wrong there — it
+		/// asked ``selectedListIDs``, which keeps an id whose List has been deleted, and so
+		/// read "0 items in the pool." over a checklist with nothing ticked on it.
+		public var poolFooter: PoolFooter {
+			selectedOptions.isEmpty ? .prompt : .pool(count: poolCount)
+		}
+
+		/// What the footer counts: the Items the Combo would pool as it currently stands.
 		///
 		/// Deduplicated by construction — ``selectedOptions`` comes off a `Set` and each
 		/// ``ListOption`` appears once — so this agrees with the count `ComboSummary` will
 		/// select back out of the database once the form is saved.
-		public var poolCount: Int {
+		internal var poolCount: Int {
 			selectedOptions.reduce(0) { $0 + $1.itemCount }
 		}
 
-		/// The ticked Lists that are still *on* the checklist — what the footer counts, and
-		/// what it branches on.
+		/// The ticked Lists that are still *on* the checklist — what ``poolFooter`` and
+		/// ``poolCount`` are both derived from.
 		///
-		/// Derived through ``options`` rather than read off ``selectedListIDs`` because a List
-		/// deleted while the form is open leaves an id behind that nothing can show. Branching
-		/// the footer on the ids would then read "0 items in the pool." over a checklist with
-		/// nothing ticked on it, where "Pick the Lists to draw from." is what that is.
+		/// Through ``options`` rather than off ``selectedListIDs``, because a List deleted while
+		/// the form is open leaves an id ticked that nothing can show.
 		internal var selectedOptions: [ListOption] {
 			options.filter { selectedListIDs.contains($0.id) }
 		}

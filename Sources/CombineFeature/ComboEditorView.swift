@@ -125,13 +125,15 @@ public struct ComboEditorView: View {
 			// Live, and the only thing on the screen that says what a Combo will actually draw
 			// from — the row captions are per List, and the pool is the sum (ADR-0020).
 			//
-			// Branched on the surviving options rather than on the ids: a List deleted while the
-			// form is open leaves an id ticked that no row can show, and this would then read
-			// "0 items in the pool." over a checklist with nothing ticked on it.
-			if store.selectedOptions.isEmpty {
+			// Which of the two it is was decided in `State`, so this renders and chooses
+			// nothing: the choice is a property a test can assert rather than a branch only a
+			// running screen could check.
+			switch store.poolFooter {
+			case .pool(let count):
+				Text("^[\(count) items](inflect: true) in the pool.", bundle: #bundle)
+
+			case .prompt:
 				Text("Pick the Lists to draw from.", bundle: #bundle)
-			} else {
-				Text("^[\(store.poolCount) items](inflect: true) in the pool.", bundle: #bundle)
 			}
 		}
 	}

@@ -75,10 +75,9 @@ internal struct CombineFeatureTests {
 			)
 		}
 
-		// Nothing ticked yet, so the footer reads "Pick the Lists to draw from." rather than a
-		// pool of zero.
+		// Nothing ticked yet, so the footer prompts rather than counting a pool of zero.
 		let editor = try #require(store.destination?.editor)
-		#expect(editor.poolCount == 0)
+		#expect(editor.poolFooter == .prompt)
 
 		store.modify {
 			$0.destination.modify(\.editor) {
@@ -94,7 +93,7 @@ internal struct CombineFeatureTests {
 		}
 		// The live footer, and the whole point of the one form: three Items across two Lists,
 		// counted before anything has been written.
-		#expect(store.destination?.editor?.poolCount == 3)
+		#expect(store.destination?.editor?.poolFooter == .pool(count: 3))
 
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
@@ -223,7 +222,7 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		#expect(store.destination?.editor?.poolCount == 1)
+		#expect(store.destination?.editor?.poolFooter == .pool(count: 1))
 
 		// Swap Lunch out for Films, and make it a Deck while we are here.
 		let options = try #require(store.destination?.editor?.options)
@@ -237,7 +236,7 @@ internal struct CombineFeatureTests {
 			$0.destination.modify(\.editor) { $0.ticked = [UUID(-2)] }
 		}
 		#expect(store.destination?.editor?.selectedListIDs == [UUID(-2)])
-		#expect(store.destination?.editor?.poolCount == 2)
+		#expect(store.destination?.editor?.poolFooter == .pool(count: 2))
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The membership was replaced rather than the Combo, and the Lists themselves are
@@ -447,7 +446,7 @@ internal struct CombineFeatureTests {
 
 		state.ticked = [UUID(-1)]
 		#expect(state.selectedOptions.map(\.id) == [UUID(-1)])
-		#expect(state.poolCount == 1)
+		#expect(state.poolFooter == .pool(count: 1))
 
 		// The other iPhone deletes the List this form has ticked.
 		try await database.write { db in
@@ -459,10 +458,15 @@ internal struct CombineFeatureTests {
 		// The tick survives in the delta — the user did ask for it, and the form does not
 		// quietly edit their input — but nothing on the checklist can show it.
 		#expect(state.selectedListIDs == [UUID(-1)])
-		// So the footer reads "Pick the Lists to draw from." rather than "0 items in the pool."
-		// over a checklist with nothing ticked on it. This is the branch the view takes.
 		#expect(state.selectedOptions.isEmpty)
-		#expect(state.poolCount == 0)
+
+		// So the footer says "Pick the Lists to draw from." rather than "0 items in the pool."
+		// over a checklist with nothing ticked on it.
+		//
+		// Asserted as the value the view renders, not as the ingredients it would have branched
+		// on: deriving this in `State` is what makes the decision testable at all, and this
+		// assertion fails if it is ever taken back off `selectedOptions`.
+		#expect(state.poolFooter == .prompt)
 	}
 
 	// MARK: - The deduplicated pool
@@ -518,7 +522,7 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		#expect(store.destination?.editor?.poolCount == 2)
+		#expect(store.destination?.editor?.poolFooter == .pool(count: 2))
 
 		// Saving leaves both rows exactly where they are. Deduplication belongs in the pool,
 		// which is where ADR-0008 puts it — a save that collapsed them would be issuing a hard,
