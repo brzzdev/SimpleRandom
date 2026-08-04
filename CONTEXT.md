@@ -314,7 +314,9 @@ Inline navigation title = the Combo's name. `Edit` is the only toolbar item and 
 
 **Member rows** — emoji · name · `N items`. Counts only; never that List's own deck state. Tapping a member row pushes the real List detail. No swipe-to-remove — the section footer says membership is edited in the form.
 
-**Randomise** — the same pinned capsule, with three distinct disabled captions rather than one: `Add a List to randomise` (no members), `The Lists in this Combo have no items` (members, empty pool), and for an exhausted Deck the button becomes **Reshuffle** rather than being disabled.
+**Randomise** — the same pinned capsule, with two distinct disabled captions rather than one: `Add a List to randomise` (no members) and `The Lists in this Combo have no items` (members, empty pool). Live, the caption is the pool: `12 items`, or `Deck · 10 of 13 left` for a Combo Deck — the index row's caption minus the `N Lists` the row needs and this screen's title has already said. For an exhausted Deck the button becomes **Reshuffle** rather than being disabled.
+
+**A Combo Deck is reshuffled only once it is spent** — from the pinned button, or from the sheet after re-rolling into exhaustion. There is no toolbar Reshuffle here, because `Edit` is the only toolbar item, so "Reshuffle is available at any time" holds of the operation but is unreachable mid-run on this tab. Accepted for v1 rather than overlooked: a second toolbar item on the one screen whose only control is `Edit` was judged the worse trade, and no member List's own Reshuffle stands in for it — that is precisely what **Decks are independent per surface** rules out.
 
 ### Settings
 

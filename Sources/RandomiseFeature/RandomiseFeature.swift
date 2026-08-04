@@ -25,8 +25,12 @@ internal import SQLiteData
 /// A Combo pools every Item of every member List and draws uniformly across the lot, so a
 /// 100-item List dominates a 3-item one in a Combo they share (#24). It names the source List
 /// above the result, which is load-bearing rather than decorative: duplicate Items are not
-/// deduplicated, so two "Pizza"s are otherwise indistinguishable. A Combo's *own* deck state
-/// — the ``ComboDraw`` rows a Combo Deck deals against — arrives with #25.
+/// deduplicated, so two "Pizza"s are otherwise indistinguishable.
+///
+/// A Combo Deck deals against ``ComboDraw`` rows of its own, and the two surfaces' decks are
+/// independent in both directions: drawing here reads and writes no ``ListDraw`` row, and an
+/// exhausted member List still contributes its Items to the pool (#25, ADR-0007). The only
+/// difference between the two paths below is which table the row goes in.
 @Feature
 public struct RandomiseFeature {
 	public struct State {
@@ -102,25 +106,7 @@ public struct RandomiseFeature {
 		/// Deck rather than opening this sheet. Once it is exhausted, **Reshuffle** has replaced
 		/// **Again** and nothing reads this.
 		public var canDrawAgain: Bool {
-			dealsAsDeck || pool.count > 1
-		}
-
-		/// Whether this sheet actually deals as a Deck — which is `drawMode` on the Lists path,
-		/// and **`false` on the Combine one whatever the Combo says**, until #25.
-		///
-		/// A Combo Deck's rows are `ComboDraw`'s, and nothing here writes or reads one yet. Left
-		/// to `scope.drawMode` alone, such a Combo would take the Deck branch of ``draw()``,
-		/// re-roll into "That's the whole deck" off a pool that never shrinks, and offer a
-		/// **Reshuffle** that ``reshuffleAndDeal(_:)`` refuses — a dead button on a screen with
-		/// no other way out. Dealing plainly is the honest interim: repeats are legal, nothing is
-		/// recorded, and every button on the sheet does what it says.
-		///
-		/// ``DrawScope/drawMode`` stays truthful — it reads the record, and the form really did
-		/// set that mode. This is the one place that says what the *sheet* can honour, and #25
-		/// deletes it rather than editing it.
-		internal var dealsAsDeck: Bool {
-			guard case .list = scope else { return false }
-			return scope.drawMode == .deck
+			scope.drawMode == .deck || pool.count > 1
 		}
 
 		/// The member List the drawn Item came from — the secondary line above the result on the
@@ -143,17 +129,19 @@ public struct RandomiseFeature {
 			self.scope = scope
 			switch scope {
 			case .combo(let combo):
-				// A Combo Deck's own `ComboDraw` rows — the pool that excludes them, the deal that
-				// writes one, and the Reshuffle that deletes them — arrive with #25. Until then it
-				// pools and draws like a plain Combo and records nothing, which is a Deck that is
-				// not dealing: reported rather than left to look deliberate.
-				if combo.drawMode == .deck {
-					reportIssue("A Combo Deck keeps no deck state yet — `ComboDraw` arrives with #25.")
-				}
-				// Every Item of every member List, flattened. `(createdAt, id)` ascending is the
-				// app's one sort order, applied across the pooled rows rather than per member, so
-				// the pool is the same sequence on every device.
-				_pool = FetchAll(Item.inCombo(combo.id).order { ($0.createdAt, $0.id) })
+				// Every Item of every member List, flattened — minus, for a Deck, the ones this
+				// Combo has already dealt. A member List's own `drawMode` and `ListDraw` rows are
+				// consulted by neither branch: an Item exhausted within its own List is still in
+				// this pool (ADR-0007).
+				let candidates =
+					switch combo.drawMode {
+					case .deck: Item.undealt(inCombo: combo.id)
+					case .independent: Item.inCombo(combo.id)
+					}
+				// `(createdAt, id)` ascending is the app's one sort order, applied across the
+				// pooled rows rather than per member, so the pool is the same sequence on every
+				// device.
+				_pool = FetchAll(candidates.order { ($0.createdAt, $0.id) })
 				_sourceLists = FetchAll(Models.List.inCombo(combo.id))
 
 			case .list(let list):
@@ -197,8 +185,9 @@ public struct RandomiseFeature {
 			// arrives before that lands would otherwise see a card the deck has already spent —
 			// and deal it a second time. The rule is the deck's own, applied to the state that
 			// has not caught up with it yet.
+			let isDeck = scope.drawMode == .deck
 			let showing = result?.item?.id
-			let candidates = dealsAsDeck ? pool.filter { $0.id != showing } : pool
+			let candidates = isDeck ? pool.filter { $0.id != showing } : pool
 			guard let drawn = withRandomNumberGenerator({ generator in
 				candidates.randomElement(using: &generator)
 			}) else {
@@ -207,10 +196,10 @@ public struct RandomiseFeature {
 				// announcement would otherwise re-read has ceased to exist, so the exhausted case
 				// has to speak for itself (ADR-0017).
 				//
-				// A plain List draws nothing and says nothing here. Its pool is empty only when
-				// the List is, and the pinned bar is disabled then, so the user cannot reach it.
-				// Nor does a Combo, which does not deal as a Deck yet — see ``dealsAsDeck``.
-				guard dealsAsDeck else { return }
+				// A plain List or Combo draws nothing and says nothing here. Its pool is empty
+				// only when the List — or every member List — is, and the pinned bar is disabled
+				// then, so the user cannot reach it.
+				guard isDeck else { return }
 				result = .exhausted
 				drawToken += 1
 				return
@@ -268,27 +257,35 @@ public struct RandomiseFeature {
 	/// sheet were dragged away mid-animation. A Deck may not deal behind the user's back
 	/// (ADR-0021).
 	private func deal(_ state: State) {
-		// Three things have to hold, and one `guard` says all three: this is a List, because a
-		// Combo's deal is a `ComboDraw` row and that arrives with #25; it is a Deck, because a
-		// plain List has no memory to keep; and it is showing an Item, because an exhausted
-		// Deck has nothing to record.
-		//
-		// A Combo therefore writes no `ListDraw` row, which is the rule rather than the gap:
-		// drawing from a Combo leaves every member List's own deck exactly as it was
-		// (ADR-0007).
+		// Two things have to hold: this is a Deck, because a plain List or Combo has no memory
+		// to keep, and it is showing an Item, because an exhausted Deck has nothing to record.
 		guard
-			case .list(let list) = state.scope,
-			list.drawMode == .deck,
+			state.scope.drawMode == .deck,
 			case .item(let item) = state.result
 		else { return }
 
 		@Dependency(\.date.now) var now
 		@Dependency(\.defaultDatabase) var database
 		let pool = state.$pool
+		// Lifted out: the task outlives this call, and `State` is not the thing to send into it
+		// — the scope is a value, and it is the whole of what the write needs.
+		let scope = state.scope
 		store.addTask {
 			await withErrorReporting {
 				try await database.write { db in
-					try ListDraw.insert { ListDraw(itemID: item.id, createdAt: now) }.execute(db)
+					// One row per dealt Item on both paths — the same mechanism in two tables,
+					// because an Item belongs to exactly one List and to any number of Combos
+					// (ADR-0006). A Combo writes **only** its own row: a member List's own deck is
+					// left exactly as it was, which is ADR-0007 seen from this side.
+					switch scope {
+					case .combo(let combo):
+						try ComboDraw
+							.insert { ComboDraw.Draft(comboID: combo.id, createdAt: now, itemID: item.id) }
+							.execute(db)
+
+					case .list:
+						try ListDraw.insert { ListDraw(itemID: item.id, createdAt: now) }.execute(db)
+					}
 				}
 				// The pool is a live query, and the observation that takes the dealt Item out of
 				// it arrives on its own schedule. Waiting for it here is what stops the next draw
@@ -304,11 +301,7 @@ public struct RandomiseFeature {
 	/// whether the deck is spent or barely touched. It deals afterwards because the button
 	/// sits where **Again** was, and a button in that position produces a result.
 	private func reshuffleAndDeal(_ state: State) {
-		// As in ``deal(_:)``: a Combo reshuffles its own `ComboDraw` rows, and those arrive
-		// with #25. It never reshuffles a member List's, which is the same rule seen from the
-		// other side (ADR-0007).
-		guard case .list(let list) = state.scope else { return }
-		// And not a second time while the first is still in flight. Each tap would otherwise
+		// Not a second time while the first is still in flight. Each tap would otherwise
 		// put the deck back and deal from it independently, so two would deal twice — the
 		// second landing on a card the user never asked for, or, on a one-card deck, straight
 		// back on "That's the whole deck" a moment after the card appeared.
@@ -319,16 +312,23 @@ public struct RandomiseFeature {
 		guard !reshuffle.isRunning else { return }
 
 		@Dependency(\.defaultDatabase) var database
-		// The id rather than the record: the task outlives this call, and the rest of the List
-		// is not its business.
-		let listID = list.id
+		// Lifted out for the reason ``deal(_:)`` gives, and the same value: which table to
+		// delete from, and which id names the rows.
+		let scope = state.scope
 		let pool = state.$pool
 		store.addTask(id: reshuffle) {
 			// `Void?` is spelled out because the closure returns nothing, and an inferred `()?`
 			// is a warning.
 			let reshuffled: Void? = await withErrorReporting {
 				try await database.write { db in
-					try ListDraw.inList(listID).delete().execute(db)
+					// A hard delete of the whole set on either path, which is what makes Reshuffle
+					// the exact inverse of the rows the deals wrote (ADR-0006). A Combo puts back
+					// its own cards and only its own: it never touches a member List's rows, and a
+					// member List's Reshuffle never touches its (ADR-0007).
+					switch scope {
+					case .combo(let combo): try ComboDraw.inCombo(combo.id).delete().execute(db)
+					case .list(let list): try ListDraw.inList(list.id).delete().execute(db)
+					}
 				}
 				// The draw that follows has to see the deck put back rather than race the
 				// observation that refills the pool, so this asks for it and waits.

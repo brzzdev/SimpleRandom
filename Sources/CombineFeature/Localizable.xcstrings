@@ -111,6 +111,28 @@
         }
       }
     },
+    "Deck · %lld of %lld left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deck · %lld of %lld left"
+          }
+        }
+      }
+    },
+    "Deck, %lld of %lld left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deck, %lld of %lld left"
+          }
+        }
+      }
+    },
     "Delete": {
       "extractionState": "manual",
       "localizations": {
