@@ -37,23 +37,18 @@ internal struct ListsIndex: View {
 	internal var body: some View {
 		List {
 			ForEach(store.summaries) { summary in
-				Button {
+				// The tappable variant, not a `Button` built here: being tappable is the caller's
+				// decision — the Combo form's checklist row is not — but *how* a tappable row is
+				// built is the component's, and it was written out at three call sites before it
+				// was one.
+				IndexRowButton(
+					emoji: summary.list.emoji,
+					name: summary.list.name,
+					caption: summary.caption,
+					accessibilityLabel: summary.accessibilityLabel,
+				) {
 					store.send(.rowTapped(summary))
-				} label: {
-					IndexRow(
-						emoji: summary.list.emoji,
-						name: summary.list.name,
-						caption: summary.caption,
-						accessibilityLabel: summary.accessibilityLabel,
-					)
-					// `.plain` hit-tests the label's drawn content, so without this the tap
-					// target is the glyphs and a short name leaves most of the row dead. On the
-					// label rather than the `Button`, since the label is what the style tests;
-					// at the call site rather than inside `IndexRow`, since being tappable is
-					// the caller's decision and not every index will want it.
-					.contentShape(.rect)
 				}
-				.buttonStyle(.plain)
 				.swipeActions(edge: .leading) {
 					Button {
 						store.send(.editSwiped(summary))
