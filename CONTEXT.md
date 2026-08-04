@@ -214,7 +214,7 @@ Twelve targets. `ListDetailFeature` is extracted for the same reason `RandomiseF
 
 Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `Components`, `ListDetailFeature`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`, and `ListDetail`'s behaviour is exercised through `ListsFeatureTests`. `CombineFeature` does not depend on `ListsFeature`: its List checklist reads `Models.List` through its own `@FetchAll`.
 
-Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies` and `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin). The last is named only so `ListsFeature` may import `SwiftUINavigation` for `alert(item:)`, whose single-optional form SwiftUI has no equivalent of; TCA26 already brings the package, so the resolved graph is unchanged. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
+Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies` and `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin). The last is named only so `ListsFeature` and `CombineFeature` may import `SwiftUINavigation` for `alert(item:)`, whose single-optional form SwiftUI has no equivalent of — both indexes raise a delete confirmation off one optional child state; TCA26 already brings the package, so the resolved graph is unchanged. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
 
 ### Composition
 
@@ -266,7 +266,7 @@ Large navigation title `Lists`, `+` the only toolbar item, pull to refresh. No r
 
 **Rows** — emoji (or a 🎲 placeholder) · name · caption. The caption is `N items` for a plain List and `Deck · N of M left` for a Deck, so the index is where you see a Deck running down without opening it.
 
-**Create and edit** — `+` opens an editor sheet at a medium detent, draggable to large: name, emoji, draw mode. The same sheet renames, reached by a leading swipe. It is the sheet with the most content in the app, so it is the one that most needs somewhere to grow.
+**Create and edit** — `+` opens an editor sheet at a medium detent, draggable to large: name, emoji, draw mode. The same sheet renames, reached by a leading swipe. It holds more than any other fixed-content sheet, so it is the one that most needs somewhere to grow. The Combine tab's form holds more again, but its content is a row per List and so has no fixed height at all — which is why that one opens at `.large` outright.
 
 **Delete** — trailing swipe. An empty List goes immediately; a List with Items raises an alert naming it, with `Delete N Items` as the destructive action and "This can't be undone, and it happens on your other devices too." as the message. An alert rather than a `confirmationDialog`, unlike **Delete All Lists**: a dialog anchors on what it is attached to, and the modifier has to sit on the index's `List` rather than the row — the scoped binding is nil-or-not rather than identity-matched, so on the row every row would present at once — from where it covered the title and the row it was naming.
 
@@ -302,7 +302,7 @@ Mirrors the Lists tab: large title `Combine`, `+`, pull to refresh, no reorder, 
 
 **Rows** — emoji · name · caption, where the caption is counts: `3 Lists · 12 items`, or `3 Lists · Deck · 10 of 13 left`.
 
-**Create and edit** — `+` opens **one form**: name, emoji, draw mode, and a `Lists` section listing every List with a checkmark, under a live "12 items in the pool." footer ("Pick the Lists to draw from." when nothing is ticked). Empty Lists are shown and selectable, captioned `No items`. The draw-mode footer says the Combo's Deck is separate from each List's own. `+` is disabled when no Lists exist.
+**Create and edit** — `+` opens **one form**, at a fixed `.large` detent: name, emoji, draw mode, and a `Lists` section listing every List with a checkmark, under a live "12 items in the pool." footer ("Pick the Lists to draw from." when nothing is ticked). Empty Lists are shown and selectable, captioned `No items`. The draw-mode footer says the Combo's Deck is separate from each List's own. `+` is disabled when no Lists exist.
 
 **Delete** — trailing swipe. An empty Combo goes immediately; a Combo with members confirms, with "The Lists in it are kept. This happens on your other devices too."
 
@@ -411,11 +411,14 @@ This deliberately departs from the convention in the sibling apps, which put one
 
 | Kind | Entry |
 | --- | --- |
-| Lists index row, Deck | `%@ · Deck · %lld of %lld left` |
+| Lists index row, Deck | `Deck · %lld of %lld left` |
 | Lists index row, VoiceOver | `%@, Deck, %lld of %lld left` |
-| Combine index row, Deck | `%@ · ^[%lld Lists](inflect: true) · Deck · %lld of %lld left` |
+| Combine index row, Deck | `^[%lld Lists](inflect: true) · Deck · %lld of %lld left` |
+| Combine index row, VoiceOver | `%@, ^[%lld Lists](inflect: true), Deck, %lld of %lld left` |
 | Item count | `^[%lld items](inflect: true)` |
 | Combine announcement | `%@, from %@` |
+
+**A visible caption carries no `%@` for the name; its spoken twin does.** The row renders the name beside the caption rather than inside it — see `Components.IndexRow` — whereas the accessibility label is one phrase and has to hold both.
 
 A join is the one construction that cannot be translated: the translator receives fragments and no control over word order, and the separator — `·` in visible captions, a comma in spoken labels — is a punctuation decision made in code by someone thinking in English. Roughly fourteen entries once the plain and Deck variants and the pinned bar's three disabled prompts are counted, which is a small price for the phrase being the unit.
 

@@ -79,6 +79,7 @@ let package = Package(
 				"Models",
 				"Preferences",
 				"RandomiseFeature",
+				.product(name: "SwiftUINavigation", package: "swift-navigation"),
 			],
 		),
 		.target(
@@ -152,9 +153,15 @@ let package = Package(
 		),
 		// Four test targets, chosen by risk rather than by symmetry (ADR-0019). The other
 		// eight targets carry none.
+		// As the other three below: everything but `Database` and the suite trait arrives
+		// through `CombineFeature`.
 		.testTarget(
 			name: "CombineFeatureTests",
-			dependencies: ["CombineFeature"],
+			dependencies: [
+				"CombineFeature",
+				"Database",
+				.product(name: "DependenciesTestSupport", package: "swift-dependencies"),
+			],
 		),
 		// `DependenciesTestSupport` carries the suite trait that hands each test case its own
 		// in-memory database, and is the only link this target needs beyond `Database` itself:
