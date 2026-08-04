@@ -30,7 +30,7 @@ public struct ComboEditor {
 	public struct State {
 		public var draft: Combo.Draft
 
-		/// What this Combo already holds, and the whole of what seeds ``selectedListIDs``.
+		/// What this Combo holds right now — live, not a snapshot taken when the form opened.
 		///
 		/// Built in `init` rather than declared on the property the way the index's reads are,
 		/// for the reason `ListDetail`'s is: the query is scoped to one Combo, and the id only
@@ -42,13 +42,30 @@ public struct ComboEditor {
 		/// device while the form is open appears in it.
 		@FetchAll(ListOption.all) internal var options: [ListOption]
 
-		/// The ticked Lists. A `Set`, so the form itself can never hold a List twice — the
-		/// duplicate rows ADR-0008 accepts come from two devices, not from here, and reopening
-		/// a Combo that has them ticks its List once.
+		/// The Lists this sitting ticked, and the ones it unticked.
 		///
-		/// Seeded from ``memberships`` and then owned by the user: this is a draft like the
-		/// name beside it, and nothing exists until Save.
-		public var selectedListIDs: Set<Models.List.ID>
+		/// **The form records the changes the user made, not the set they left behind.** A
+		/// snapshot would make Save rewrite the whole membership from state that went stale the
+		/// moment another device touched it: open the form with Lunch ticked, let another
+		/// iPhone add Films, rename the Combo, and saving would delete Films — a membership
+		/// this sitting never saw and the user never touched. That is precisely the silent loss
+		/// ADR-0008 chose a join table to avoid, reintroduced one layer up.
+		///
+		/// Holding the deltas instead means Save deletes only what was unticked here and
+		/// inserts only what was ticked here, so an edit from another device merges rather than
+		/// losing a race with an unrelated rename.
+		internal var ticked: Set<Models.List.ID> = []
+		internal var unticked: Set<Models.List.ID> = []
+
+		/// What the checklist shows ticked: what the Combo holds, plus this sitting's ticks,
+		/// minus its unticks.
+		///
+		/// A `Set`, so the form can never show a List twice — the duplicate rows ADR-0008
+		/// accepts come from two devices, not from here, and a Combo that has them ticks its
+		/// List once.
+		public var selectedListIDs: Set<Models.List.ID> {
+			Set(memberships.map(\.listID)).union(ticked).subtracting(unticked)
+		}
 
 		/// Trimmed and non-empty is the rule for a name; this is where it is enforced, and
 		/// the only thing gating Save. Neither the emoji nor the membership gates it: zero
@@ -66,12 +83,13 @@ public struct ComboEditor {
 			selectedOptions.reduce(0) { $0 + $1.itemCount }
 		}
 
-		/// The ticked Lists in the app's one sort order — what the footer counts, and what
-		/// Save writes.
+		/// The ticked Lists that are still *on* the checklist — what the footer counts, and
+		/// what it branches on.
 		///
-		/// Ordered through ``options`` rather than by sorting the ids, so membership rows are
-		/// created in the order the checklist shows them. It also drops any id whose List has
-		/// gone since the form opened, which would otherwise fail the foreign key.
+		/// Derived through ``options`` rather than read off ``selectedListIDs`` because a List
+		/// deleted while the form is open leaves an id behind that nothing can show. Branching
+		/// the footer on the ids would then read "0 items in the pool." over a checklist with
+		/// nothing ticked on it, where "Pick the Lists to draw from." is what that is.
 		internal var selectedOptions: [ListOption] {
 			options.filter { selectedListIDs.contains($0.id) }
 		}
@@ -80,11 +98,6 @@ public struct ComboEditor {
 			self.draft = draft
 			let comboIDs = draft.id.map { [$0] } ?? []
 			_memberships = FetchAll(ComboList.where { $0.comboID.in(comboIDs) })
-			// Empty first and then seeded, because reading `memberships` goes through `self`
-			// and Swift will not lend it out until every stored property has a value. The
-			// query above has already run by then — a `@FetchAll` fetches as it is built.
-			selectedListIDs = []
-			selectedListIDs = Set(memberships.map(\.listID))
 		}
 	}
 
@@ -106,12 +119,14 @@ public struct ComboEditor {
 				store.addTask { try store.dismiss() }
 
 			case .listToggled(let option):
-				// A tick is a toggle, and the `Set` is what makes it idempotent in both
-				// directions.
+				// Each tick lands in one set and is cleared from the other, so toggling back and
+				// forth leaves no residue and a List is never both ticked and unticked.
 				if state.selectedListIDs.contains(option.id) {
-					state.selectedListIDs.remove(option.id)
+					state.ticked.remove(option.id)
+					state.unticked.insert(option.id)
 				} else {
-					state.selectedListIDs.insert(option.id)
+					state.unticked.remove(option.id)
+					state.ticked.insert(option.id)
 				}
 
 			case .saveButtonTapped:
@@ -126,7 +141,12 @@ public struct ComboEditor {
 				var edited = state.draft
 				edited.name = edited.name.trimmedForStorage
 				let draft = edited
-				let listIDs = state.selectedOptions.map(\.id)
+				// Ticks are filtered through `options` so a List deleted while the form was open
+				// cannot be inserted against a foreign key that has gone. Unticks are not: the
+				// row is being deleted by `listID`, and a List that no longer exists has already
+				// taken its membership with it.
+				let added = state.options.map(\.id).filter(state.ticked.contains)
+				let removed = Array(state.unticked)
 
 				@Dependency(\.date.now) var now
 				@Dependency(\.defaultDatabase) var database
@@ -141,7 +161,7 @@ public struct ComboEditor {
 						// One transaction, so a Combo can never be left holding the membership
 						// of the edit before it — or, on a create, no membership at all.
 						try await database.write { db in
-							try writeCombo(draft, memberListIDs: listIDs, at: now, to: db)
+							try writeCombo(draft, adding: added, removing: removed, at: now, to: db)
 						}
 					}
 					guard saved != nil else { return }
@@ -152,24 +172,24 @@ public struct ComboEditor {
 	}
 }
 
-/// Upserts the Combo and reconciles its memberships to the ticked Lists.
+/// Upserts the Combo and applies the membership changes this sitting made.
 ///
-/// The reconciliation deletes what is no longer ticked and inserts what is newly ticked,
-/// rather than deleting every row and reinserting: a membership nobody touched keeps its id
-/// and its `createdAt`, so it does not resurface on every other device as a deletion
-/// followed by a fresh insert.
+/// **Only what the user ticked and unticked.** A membership neither touched is left exactly
+/// as it is — same row, same id, same `createdAt` — so an edit arriving from another device
+/// survives a save here, and so a save does not resurface an untouched membership everywhere
+/// else as a deletion followed by a fresh insert.
 ///
-/// **Duplicate rows for a still-ticked List are left exactly where they are.** Two devices
-/// adding the same List offline is a legal steady state under ADR-0008, and deduplication
-/// belongs where that ADR puts it — in the pool, when it is built. Collapsing them here
-/// would mean a save issuing a hard, global delete of a row another device authored, which
-/// is not something the user asked this form to do.
+/// **Duplicate rows for a ticked List are left where they are.** Two devices adding the same
+/// List offline is a legal steady state under ADR-0008, and deduplication belongs where that
+/// ADR puts it — in the pool, when it is built. Collapsing them here would mean a save
+/// issuing a hard, global delete of a row another device authored.
 ///
 /// A free function rather than a method on ``ComboEditor``, so the database write captures
-/// the four values it needs and not the feature.
+/// the values it needs and not the feature.
 private func writeCombo(
 	_ draft: Combo.Draft,
-	memberListIDs: [Models.List.ID],
+	adding: [Models.List.ID],
+	removing: [Models.List.ID],
 	at now: Date,
 	to db: Database,
 ) throws {
@@ -181,19 +201,23 @@ private func writeCombo(
 	let upsert = Combo.upsert { draft }.returning(\.id)
 	guard let comboID = try upsert.fetchOne(db) else { throw ComboNotSaved() }
 
-	try ComboList
-		.inCombo(comboID)
-		.and(ComboList.where { $0.listID.notIn(memberListIDs) })
-		.delete()
-		.execute(db)
+	if !removing.isEmpty {
+		try ComboList
+			.inCombo(comboID)
+			.and(ComboList.where { $0.listID.in(removing) })
+			.delete()
+			.execute(db)
+	}
 
-	let keptListIDs = try Set(ComboList.inCombo(comboID).select { $0.listID }.fetchAll(db))
-	let added = memberListIDs
-		.filter { !keptListIDs.contains($0) }
+	// A List ticked here that another device had already added needs no second row: the tick
+	// asked for membership, which it has.
+	let existingListIDs = try Set(ComboList.inCombo(comboID).select { $0.listID }.fetchAll(db))
+	let inserts = adding
+		.filter { !existingListIDs.contains($0) }
 		.map { ComboList.Draft(comboID: comboID, createdAt: now, listID: $0) }
-	guard !added.isEmpty else { return }
+	guard !inserts.isEmpty else { return }
 	// One statement for the lot, rather than a prepare and a step per newly-ticked List.
-	try ComboList.insert { added }.execute(db)
+	try ComboList.insert { inserts }.execute(db)
 }
 
 /// An upsert that wrote no row, which SQLite does not do — but `RETURNING` is typed as

@@ -87,10 +87,10 @@ internal struct CombineFeatureTests {
 			}
 		}
 		store.send(.destination(.editor(.listToggled(editor.options[0])))) {
-			$0.destination.modify(\.editor) { $0.selectedListIDs = [UUID(-1)] }
+			$0.destination.modify(\.editor) { $0.ticked = [UUID(-1)] }
 		}
 		store.send(.destination(.editor(.listToggled(editor.options[1])))) {
-			$0.destination.modify(\.editor) { $0.selectedListIDs = [UUID(-1), UUID(-2)] }
+			$0.destination.modify(\.editor) { $0.ticked = [UUID(-1), UUID(-2)] }
 		}
 		// The live footer, and the whole point of the one form: three Items across two Lists,
 		// counted before anything has been written.
@@ -226,12 +226,17 @@ internal struct CombineFeatureTests {
 		#expect(store.destination?.editor?.poolCount == 1)
 
 		// Swap Lunch out for Films, and make it a Deck while we are here.
+		let options = try #require(store.destination?.editor?.options)
 		store.modify {
-			$0.destination.modify(\.editor) {
-				$0.draft.drawMode = .deck
-				$0.selectedListIDs = [UUID(-2)]
-			}
+			$0.destination.modify(\.editor) { $0.draft.drawMode = .deck }
 		}
+		store.send(.destination(.editor(.listToggled(options[0])))) {
+			$0.destination.modify(\.editor) { $0.unticked = [UUID(-1)] }
+		}
+		store.send(.destination(.editor(.listToggled(options[1])))) {
+			$0.destination.modify(\.editor) { $0.ticked = [UUID(-2)] }
+		}
+		#expect(store.destination?.editor?.selectedListIDs == [UUID(-2)])
 		#expect(store.destination?.editor?.poolCount == 2)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
@@ -286,8 +291,9 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		store.modify {
-			$0.destination.modify(\.editor) { $0.selectedListIDs = [UUID(-1), UUID(-2)] }
+		let films = try #require(store.destination?.editor?.options.last)
+		store.send(.destination(.editor(.listToggled(films)))) {
+			$0.destination.modify(\.editor) { $0.ticked = [UUID(-2)] }
 		}
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
@@ -630,7 +636,8 @@ extension ComboEditor.State.DebugSnapshot {
 			draft: draft,
 			memberships: memberships,
 			options: options,
-			selectedListIDs: Set(memberships.map(\.listID)),
+			ticked: [],
+			unticked: [],
 		)
 	}
 }
