@@ -266,7 +266,7 @@ Large navigation title `Lists`, `+` the only toolbar item, pull to refresh. No r
 
 **Rows** — emoji (or a 🎲 placeholder) · name · caption. The caption is `N items` for a plain List and `Deck · N of M left` for a Deck, so the index is where you see a Deck running down without opening it.
 
-**Create and edit** — `+` opens an editor sheet at a medium detent, draggable to large: name, emoji, draw mode. The same sheet renames, reached by a leading swipe. It is the sheet with the most content in the app, so it is the one that most needs somewhere to grow.
+**Create and edit** — `+` opens an editor sheet at a medium detent, draggable to large: name, emoji, draw mode. The same sheet renames, reached by a leading swipe. It holds more than any other fixed-content sheet, so it is the one that most needs somewhere to grow. The Combine tab's form holds more again, but its content is a row per List and so has no fixed height at all — which is why that one opens at `.large` outright.
 
 **Delete** — trailing swipe. An empty List goes immediately; a List with Items raises an alert naming it, with `Delete N Items` as the destructive action and "This can't be undone, and it happens on your other devices too." as the message. An alert rather than a `confirmationDialog`, unlike **Delete All Lists**: a dialog anchors on what it is attached to, and the modifier has to sit on the index's `List` rather than the row — the scoped binding is nil-or-not rather than identity-matched, so on the row every row would present at once — from where it covered the title and the row it was naming.
 
@@ -302,7 +302,7 @@ Mirrors the Lists tab: large title `Combine`, `+`, pull to refresh, no reorder, 
 
 **Rows** — emoji · name · caption, where the caption is counts: `3 Lists · 12 items`, or `3 Lists · Deck · 10 of 13 left`.
 
-**Create and edit** — `+` opens **one form**: name, emoji, draw mode, and a `Lists` section listing every List with a checkmark, under a live "12 items in the pool." footer ("Pick the Lists to draw from." when nothing is ticked). Empty Lists are shown and selectable, captioned `No items`. The draw-mode footer says the Combo's Deck is separate from each List's own. `+` is disabled when no Lists exist.
+**Create and edit** — `+` opens **one form**, at a fixed `.large` detent: name, emoji, draw mode, and a `Lists` section listing every List with a checkmark, under a live "12 items in the pool." footer ("Pick the Lists to draw from." when nothing is ticked). Empty Lists are shown and selectable, captioned `No items`. The draw-mode footer says the Combo's Deck is separate from each List's own. `+` is disabled when no Lists exist.
 
 **Delete** — trailing swipe. An empty Combo goes immediately; a Combo with members confirms, with "The Lists in it are kept. This happens on your other devices too."
 

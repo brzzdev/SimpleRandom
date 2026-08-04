@@ -44,3 +44,39 @@ public struct ComboList: Hashable, Identifiable, Sendable {
 		self.updatedAt = updatedAt
 	}
 }
+
+/// The macro generates `Draft` without carrying the conformances declared above, and every
+/// one of its fields is `Sendable` already. Features build a draft on the main actor and
+/// hand it to a database write, so this is the conformance that lets one cross.
+extension ComboList.Draft: Sendable {}
+
+extension ComboList.Draft {
+	/// A membership that has not been saved yet.
+	///
+	/// The generated memberwise initialiser is internal to this target, so this is what the
+	/// Combo form adds a member List with. It leaves `id` `nil` so the schema's `newID()`
+	/// default mints it — no insert site in the app names an id (ADR-0011).
+	public init(comboID: Combo.ID, createdAt: Date, listID: List.ID) {
+		// Every argument is spelled out, `nil`s included, so this cannot resolve to itself.
+		self.init(
+			id: nil,
+			comboID: comboID,
+			createdAt: createdAt,
+			deletedAt: nil,
+			listID: listID,
+			position: nil,
+			updatedAt: nil,
+		)
+	}
+}
+
+extension ComboList {
+	/// One Combo's memberships, in no particular order.
+	///
+	/// Unordered for the reason ``Item/inList(_:)`` is: the callers want different things of
+	/// it, and a membership carries no order anything reads — `position` is reserved and
+	/// unread in v1 (ADR-0003).
+	public static func inCombo(_ comboID: Combo.ID) -> Where<ComboList> {
+		Self.where { $0.comboID.eq(comboID) }
+	}
+}

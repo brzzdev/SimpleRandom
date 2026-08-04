@@ -68,10 +68,12 @@ public struct ListEditorView: View {
 			}
 		}
 		// Opens at medium, so nothing changes at default sizes — it gains somewhere to go. This
-		// is the sheet with the most content in the app — name field, `EmojiField`, segmented
+		// holds more than any other fixed-content sheet — name field, `EmojiField`, segmented
 		// picker, footer paragraph, against one control each in the other two — and at the
 		// largest accessibility size medium clips the footer off the bottom. `.large` is what
-		// the user can then drag to (ADR-0018).
+		// the user can then drag to (ADR-0018). The Combine tab's form holds more again, but
+		// its last section is a row per List and so has no fixed height to check at all, which
+		// is why that one opens at `.large` outright rather than offering it.
 		//
 		// **The keyboard is not the reason.** Checked on the simulator: iOS promotes the sheet
 		// clear of the keyboard when the name field takes focus, and did so with `[.medium]`

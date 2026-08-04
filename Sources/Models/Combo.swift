@@ -44,3 +44,38 @@ public struct Combo: Hashable, Identifiable, Sendable {
 		self.updatedAt = updatedAt
 	}
 }
+
+/// The macro generates `Draft` without carrying the conformances declared above, and every
+/// one of its fields is `Sendable` already. Features build a draft on the main actor and
+/// hand it to a database write, so this is the conformance that lets one cross.
+extension Combo.Draft: Sendable {}
+
+extension Combo.Draft {
+	/// A Combo that has not been saved yet.
+	///
+	/// The generated memberwise initialiser is internal to this target, so this is what the
+	/// feature targets build a new Combo with. It takes only the two fields a creating user
+	/// supplies plus the sort key, and leaves `id` `nil` so the schema's `newID()` default
+	/// mints it — no insert site in the app names an id (ADR-0011).
+	///
+	/// Membership is not here: it lives in ``ComboList`` rows the form writes alongside this
+	/// one (ADR-0008), so a draft carries only the Combo's own columns.
+	public init(
+		createdAt: Date,
+		drawMode: DrawMode = .independent,
+		emoji: String? = nil,
+		name: String,
+	) {
+		// Every argument is spelled out, `nil`s included, so this cannot resolve to itself.
+		self.init(
+			id: nil,
+			createdAt: createdAt,
+			deletedAt: nil,
+			drawMode: drawMode,
+			emoji: emoji,
+			name: name,
+			position: nil,
+			updatedAt: nil,
+		)
+	}
+}
