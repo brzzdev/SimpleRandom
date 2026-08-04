@@ -35,8 +35,8 @@ let package = Package(
 		// costs only enum-table support, which this schema does not use.
 		.package(url: "https://github.com/pointfreeco/sqlite-data", from: "1.7.0"),
 		.package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.12.0"),
-		// Named here only so `ListsFeature` may `import SwiftUINavigation` for
-		// `confirmationDialog(item:)`, which SwiftUI still has no form of. TCA26 already
+		// Named here only so `ListsFeature` may `import SwiftUINavigation` for `alert(item:)`,
+		// whose single-optional form SwiftUI still has no equivalent of. TCA26 already
 		// depends on this package and pins this branch, so the resolved graph is unchanged —
 		// the entry declares a dependency the app was already building against transitively.
 		// The branch must stay in step with TCA26's, or resolution fails outright rather than

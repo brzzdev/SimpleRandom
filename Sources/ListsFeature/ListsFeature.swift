@@ -28,7 +28,7 @@ public struct ListsFeature {
 
 	/// The confirmation a non-empty List raises before it goes.
 	///
-	/// It carries the name and the count because the dialog states both — the specificity is
+	/// It carries the name and the count because the alert states both — the specificity is
 	/// the safety mechanism, and a delete here is hard, global and unrecoverable.
 	@Feature
 	public struct ConfirmDeletion: Prompt {

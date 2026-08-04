@@ -274,7 +274,7 @@ internal struct ListsFeatureTests {
 		// Nothing has gone yet: raising the confirmation is the whole of what the swipe did.
 		#expect(try await lists().count == 2)
 
-		// `Prompt` nils the destination out on the way through, so the dialog's dismissal is
+		// `Prompt` nils the destination out on the way through, so the alert's dismissal is
 		// the feature's own behaviour rather than SwiftUI's, replayed.
 		await store.send(.destination(.confirmDeletion(.deleteButtonTapped))) {
 			$0.destination = nil

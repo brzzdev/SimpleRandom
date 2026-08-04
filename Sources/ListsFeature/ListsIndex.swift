@@ -21,6 +21,12 @@ internal import SwiftUINavigation
 /// inside the navigation hierarchy and beside the rows that raise it. Not on the row: the
 /// scoped binding below is nil-or-not rather than identity-matched, so every row in the
 /// `ForEach` would see the same non-`nil` value and each would try to present.
+///
+/// An alert rather than a confirmation dialog, which is why that placement costs nothing. A
+/// dialog anchors on whatever it is attached to, so from here it pointed at the index and
+/// covered both the title and the row it was naming — the one thing you need to see while
+/// answering it. An alert is centred and dims what is behind it, so there is nothing to
+/// anchor and nothing to obscure.
 internal struct ListsIndex: View {
 	@Bindable private var store: StoreOf<ListsFeature>
 
@@ -57,15 +63,15 @@ internal struct ListsIndex: View {
 					.tint(.blue)
 				}
 				.swipeActions {
-					// Deliberately not `role: .destructive`, unlike the dialog's own Delete below
+					// Deliberately not `role: .destructive`, unlike the alert's own Delete below
 					// and the Item row's in ``ListDetailItems``. Inside `swipeActions` the role is
 					// a claim and not just a colour: SwiftUI takes it to mean the row is going and
 					// animates it out on tap without waiting to be told. This tap does not always
 					// delete — a non-empty List gets the confirmation instead — so the row would
 					// collapse and spring back while the question was still being asked. The red
 					// is still right, and is asked for directly the way Edit asks for its blue:
-					// the swipe leads to a hard, global delete, and the dialog is what makes that
-					// safe rather than the colour.
+					// the swipe leads to a hard, global delete, and the confirmation is what makes
+					// that safe rather than the colour.
 					Button {
 						store.send(.deleteSwiped(summary))
 					} label: {
@@ -75,16 +81,15 @@ internal struct ListsIndex: View {
 				}
 			}
 		}
-		// The dialog names the List it is about to destroy, and states how much goes with it.
+		// The alert names the List it is about to destroy, and states how much goes with it.
 		// The specificity is the safety mechanism: a delete here is hard, global and
 		// unrecoverable.
 		//
 		// `item:` is SwiftUINavigation's, not SwiftUI's — it takes the one optional the child
 		// state already is and derives the presentation flag from it internally, so there is no
 		// second `Binding<Bool>` to keep in step and nothing to unwrap at the call site.
-		.confirmationDialog(
+		.alert(
 			item: $store.scope(\.destination, action: \.destination).confirmDeletion,
-			titleVisibility: .visible,
 		) { deletion in
 			Text("Delete “\(deletion.name)”?", bundle: #bundle)
 		} actions: { deletion in
@@ -92,6 +97,13 @@ internal struct ListsIndex: View {
 				store.send(.destination(.confirmDeletion(.deleteButtonTapped)))
 			} label: {
 				Text("Delete ^[\(deletion.itemCount) Items](inflect: true)", bundle: #bundle)
+			}
+			// Spelled out because an alert, unlike a confirmation dialog, supplies a dismiss
+			// button of its own only when the actions builder is empty — without this the
+			// question would have an answer but no way to decline it. No action to send: the
+			// `item:` binding above nils the destination on dismiss.
+			Button(role: .cancel) {} label: {
+				Text("Cancel", bundle: #bundle)
 			}
 		} message: { _ in
 			Text("This can't be undone, and it happens on your other devices too.", bundle: #bundle)
