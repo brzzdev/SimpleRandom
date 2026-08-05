@@ -1274,9 +1274,10 @@ extension CombineFeatureTests {
 				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Sushi")
 				Item(id: UUID(-3), createdAt: .seed, listID: UUID(-1), title: "Ramen")
 
-				// Not a member, and its Item is dealt by this Combo — the row a List dropped from
-				// the Combo leaves behind. It must count for nothing, or the caption reads
-				// `1 of 3 left` over a deck that has dealt one card.
+				// Not a member, and its Item is dealt by this Combo — the row a List unticked on
+				// *another* device leaves behind, which ADR-0023's cleanup cannot reach. It must
+				// count for nothing, or the caption reads `1 of 3 left` over a deck that has
+				// dealt one card.
 				Models.List.films
 				Item(id: UUID(-4), createdAt: .seed, listID: UUID(-2), title: "Heat")
 
@@ -1391,6 +1392,109 @@ extension CombineFeatureTests {
 		try await state.$members.load()
 		#expect(state.randomiseCaption == .deck(remaining: 2, total: 3))
 		#expect(state.isExhausted == false)
+	}
+
+	@Test
+	internal func untickingAListTakesThisCombosDrawsOfItsItemsAndNoOthers() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+
+				Models.List.films
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-2), title: "Heat")
+
+				// Friday night pools both and has dealt both.
+				Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
+				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
+				ComboDraw(id: UUID(-2), comboID: UUID(-1), createdAt: .later, itemID: UUID(-2))
+
+				// Weeknights pools Films too, and has dealt the very same Item.
+				Combo(id: UUID(-2), createdAt: .later, drawMode: .deck, name: "Weeknights")
+				ComboList(id: UUID(-3), comboID: UUID(-2), createdAt: .seed, listID: UUID(-2))
+				ComboDraw(id: UUID(-3), comboID: UUID(-2), createdAt: .seed, itemID: UUID(-2))
+
+				// And Films is a Deck in its own right, part-way through its own run.
+				ListDraw(itemID: UUID(-2), createdAt: .seed)
+			}
+		}
+		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(store.summaries.first)
+
+		store.send(.editSwiped(summary)) {
+			$0.destination = .editor(
+				.editing(
+					Combo.Draft(summary.combo),
+					options: [
+						ListOption(itemCount: 1, list: .lunch),
+						ListOption(itemCount: 1, list: .films),
+					],
+					ticked: [
+						.lunchOf(UUID(-1), createdAt: .seed),
+						ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2)),
+					],
+				)
+			)
+		}
+
+		let options = try #require(store.destination?.editor?.options)
+		store.send(.destination(.editor(.listToggled(options[1])))) {
+			$0.destination.modify(\.editor) { $0.unticked = [UUID(-2)] }
+		}
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
+
+		// Friday night's memory of Heat goes with the membership: those cards are not in its
+		// deck any more, so neither is the record of dealing them (ADR-0023). Its draw of Pizza
+		// stays, because Lunch is still a member.
+		let rows = try await draws()
+		#expect(rows.filter { $0.comboID == UUID(-1) }.map(\.itemID) == [UUID(-1)])
+
+		// **And not one row more.** Weeknights still holds Heat and keeps its own draw of it —
+		// the delete is scoped by Combo as well as by Item, or unticking here would empty every
+		// other Combo's memory of the same Items. Films' own `ListDraw` row is untouched too:
+		// the form reaches no `ListDraw` row at all (ADR-0007).
+		#expect(rows.filter { $0.comboID == UUID(-2) }.map(\.itemID) == [UUID(-2)])
+		#expect(try await listDraws().map(\.itemID) == [UUID(-2)])
+
+		let friday = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		let weeknights = Combo(id: UUID(-2), createdAt: .later, drawMode: .deck, name: "Weeknights")
+		try await reloadIndex(store)
+		store.expect {
+			$0.destination = nil
+			// `Deck · 0 of 1 left` for Friday night: it is down to Lunch, and its one card is
+			// dealt. The deleted rows leave no trace in the arithmetic — the point of deleting
+			// them rather than filtering them out forever.
+			$0.summaries = [
+				ComboSummary(combo: friday, dealtCount: 1, itemCount: 1, listCount: 1),
+				ComboSummary(combo: weeknights, dealtCount: 1, itemCount: 1, listCount: 1),
+			]
+		}
+
+		// So re-adding Films gives this Combo a clean card rather than one that arrives dealt,
+		// which is the failure leaving the row behind would have produced — a deck that shrank
+		// for a reason nothing on screen ever showed. Not a gesture this test drives through the
+		// form: what is under test is the row, and the form's insert is `anUntouchedMembership…`'s
+		// claim.
+		try await database.write { db in
+			try db.seed {
+				ComboList(id: UUID(-4), comboID: UUID(-1), createdAt: .later, listID: UUID(-2))
+			}
+		}
+		// Read rather than `expect`ed: nothing was sent, so there is no action whose changes
+		// this could be — the third note on the suite says why that makes `expect` the wrong
+		// tool here.
+		//
+		// `Deck · 1 of 2 left`, not `0 of 2`: Heat is back in the pool and back in the deck.
+		try await reloadIndex(store)
+		#expect(
+			store.summaries == [
+				ComboSummary(combo: friday, dealtCount: 1, itemCount: 2, listCount: 2),
+				ComboSummary(combo: weeknights, dealtCount: 1, itemCount: 1, listCount: 1),
+			]
+		)
+		#expect(RandomiseFeature.State(scope: .combo(friday)).pool.map(\.title) == ["Heat"])
 	}
 
 	@Test

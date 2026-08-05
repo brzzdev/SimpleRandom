@@ -22,6 +22,9 @@ internal import SwiftUI
 /// one form, and a second way to change it would be a second home for it (ADR-0020). A Combo
 /// with no members renders the section's header and that footer and nothing between them,
 /// which is the honest empty state — the pinned bar below is already prompting for a List.
+///
+/// Removing a List *there* takes this Combo's draws of its Items with it (ADR-0023), which is
+/// the one thing the form does to deck state and the reason these rows can never show it.
 internal struct ComboMembers: View {
 	private let store: StoreOf<ComboDetail>
 

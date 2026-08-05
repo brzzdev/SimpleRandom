@@ -42,8 +42,13 @@ extension ComboSummary {
 	/// Items it contributes are the same operation here.
 	///
 	/// The draw join is conditioned on the Item as well as the Combo, so `dealtCount` counts
-	/// only draws of Items still in the pool. A List dropped from a Combo takes its draws out
-	/// of the arithmetic with it, rather than leaving a Deck reading `-2 of 5 left`.
+	/// only draws of Items still in the pool, and a Combo holding draws of Items it no longer
+	/// pools reads `3 of 5 left` rather than `-2 of 5 left`.
+	///
+	/// **That condition survives ADR-0023**, which deletes those draws when the form unticks a
+	/// List and so looks to make it redundant. It is not: the cleanup runs on the device doing
+	/// the unticking, and ADR-0008's premise is that a second device editing offline is a legal
+	/// steady state. A cleanup on one device cannot be this arithmetic's guarantee.
 	public static var index: some Statement<ComboSummary> {
 		Combo
 			.group(by: \.id)

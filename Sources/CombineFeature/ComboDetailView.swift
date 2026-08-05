@@ -11,8 +11,9 @@ internal import ListDetailFeature
 internal import Models
 internal import RandomiseFeature
 
-/// One Combo's member Lists: inline title, `Edit` in the toolbar, tap a member to push the
-/// real List detail, and the pinned Randomise that draws from the pool.
+/// One Combo's member Lists: inline title, `Edit` in the toolbar — beside **Reshuffle** when
+/// the Combo is a Deck — tap a member to push the real List detail, and the pinned Randomise
+/// that draws from the pool.
 public struct ComboDetailView: View {
 	@Bindable private var store: StoreOf<ComboDetail>
 
@@ -26,8 +27,29 @@ public struct ComboDetailView: View {
 			.navigationTitle(Text(verbatim: store.combo.name))
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
-				// The only toolbar item. There is no `+` here and no swipe-to-remove on the rows:
-				// membership has exactly one home, and it is the form this opens (ADR-0020).
+				// A Deck only, and the one place this Combo's Deck is reachable mid-run: the pinned
+				// button does not become Reshuffle until the Deck is spent, and the sheet offers it
+				// only once a re-roll has landed on exhaustion. Without it "Reshuffle is available
+				// at any time" would hold in the domain and be unreachable on this tab — the
+				// argument the Lists tab's own toolbar item is there to answer, which is why #24's
+				// "`Edit` is the only toolbar item" does not survive a Combo that can be a Deck.
+				//
+				// A member List's Reshuffle is not a substitute and could never be: it puts back
+				// that List's own cards and leaves this Combo's exactly where they are (ADR-0007).
+				//
+				// Dimmed while there is nothing pooled to put back, which is the caption's
+				// `Deck · N of N left` said as a button state.
+				if store.isDeck {
+					Button {
+						store.send(.reshuffleButtonTapped)
+					} label: {
+						Label { Text("Reshuffle", bundle: #bundle) } icon: { Image(systemName: "shuffle") }
+					}
+					.disabled(store.draws.isEmpty)
+				}
+
+				// There is no `+` here and no swipe-to-remove on the rows: membership has exactly
+				// one home, and it is the form this opens (ADR-0020).
 				Button {
 					store.send(.editButtonTapped)
 				} label: {

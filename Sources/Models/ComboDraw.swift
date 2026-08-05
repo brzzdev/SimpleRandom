@@ -82,11 +82,32 @@ extension ComboDraw {
 		Self.where { $0.comboID.eq(comboID) }
 	}
 
+	/// One Combo's draws of the Items belonging to particular Lists — what leaves with a member
+	/// List when the form unticks it.
+	///
+	/// **Scoped by the Combo as well as by the Lists, and it has to be.** An Item belongs to any
+	/// number of Combos, so a delete keyed on the Items alone would clear every other Combo's
+	/// memory of them too — the failure ADR-0007 exists to rule out, arriving through the form
+	/// instead of through the draw.
+	public static func inCombo(
+		_ comboID: Combo.ID,
+		ofLists listIDs: [List.ID],
+	) -> Where<ComboDraw> {
+		inCombo(comboID)
+			+ Self.where { $0.itemID.in(Item.where { $0.listID.in(listIDs) }.select { $0.id }) }
+	}
+
 	/// One Combo's draws of Items that are still in its pool — the rows its arithmetic counts.
 	///
-	/// Narrower than ``inCombo(_:)`` because a List dropped from a Combo leaves its draws
-	/// behind, and counting those would read the Deck down below zero. It is the same
-	/// condition `ComboSummary.index` joins on, said of one Combo.
+	/// Narrower than ``inCombo(_:)`` because a Combo can hold draws of Items it no longer pools,
+	/// and counting those would read the Deck down below zero.
+	///
+	/// **This survives ``inCombo(_:ofLists:)``, which looks to make it redundant.** That cleanup
+	/// runs on the device doing the unticking; a second device unticking offline deletes the
+	/// `ComboList` row and nothing tells this one to clear the draws. ADR-0008's premise is that
+	/// concurrent offline edits are a legal steady state rather than a corrupt one, so a cleanup
+	/// on one device can never be the arithmetic's guarantee. It is the same condition
+	/// `ComboSummary.index` joins on, said of one Combo.
 	public static func pooled(in comboID: Combo.ID) -> Where<ComboDraw> {
 		inCombo(comboID) + Self.where { $0.itemID.in(Item.inCombo(comboID).select { $0.id }) }
 	}

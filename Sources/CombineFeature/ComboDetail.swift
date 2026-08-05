@@ -222,10 +222,14 @@ public struct ComboDetail {
 				state.destination = .randomise(RandomiseFeature.State(scope: .combo(state.combo)))
 
 			case .reshuffleButtonTapped:
-				// Puts every pooled Item this Combo has dealt back — a hard delete of the whole
-				// set, which is what makes it the exact inverse of the rows the draws wrote
-				// (ADR-0006). Every member List's own `ListDraw` rows are left exactly where they
-				// are: this Combo is putting back its own cards and nobody else's (ADR-0007).
+				// Puts every Item this Combo has dealt back, whether the Deck is spent or barely
+				// touched — a hard delete of the whole set, which is what makes it the exact
+				// inverse of the rows the draws wrote (ADR-0006). Every member List's own
+				// `ListDraw` rows are left exactly where they are: this Combo is putting back its
+				// own cards and nobody else's (ADR-0007).
+				//
+				// Sent by the toolbar item and by the pinned bar's spent Deck alike, which is why
+				// this is not gated on exhaustion.
 				@Dependency(\.defaultDatabase) var database
 				let comboID = state.combo.id
 				store.addTask {
