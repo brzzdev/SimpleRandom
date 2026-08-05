@@ -73,7 +73,9 @@ public struct RandomiseFeature {
 		///
 		/// The third way is a write that committed under a reload that **threw**, and it is the
 		/// only one that keeps the guard: the pool is stale, so nothing fresh says whether the
-		/// card is spent, and the safe direction is to assume it is. Later reloads settle it.
+		/// card is spent, and the safe direction is to assume it is. That entry is left for
+		/// ``dropGuardsThePoolNoLongerOffers()`` to clear, because the deal that made it has
+		/// already ended and will never speak again.
 		///
 		/// **The token is what makes an entry belong to one deal**, and it is load-bearing rather
 		/// than defensive. A deal from before a Reshuffle can land after the Reshuffle has put the
@@ -203,6 +205,24 @@ public struct RandomiseFeature {
 		/// nothing, and adding the same text twice is the user's own weighting mechanism
 		/// (ADR-0004). A one-item pool therefore always returns that Item.
 		///
+		/// Drops every guard the pool has stopped offering, which is only ever safe to call with
+		/// a pool that has just been reloaded.
+		///
+		/// A card a *fresh* pool no longer offers has a committed row behind it, so the query
+		/// refuses it unaided and the guard is redundant — whichever deal made it. That is what
+		/// makes this safe alongside ``dealSettled(_:from:)`` rather than a second, conflicting
+		/// rule: it only ever drops what is already refused, so it cannot clear a guard that is
+		/// doing work.
+		///
+		/// It exists for the one entry ``dealt`` cannot settle on its own — a write that
+		/// committed under a reload that threw, whose deal has ended without ever learning the
+		/// outcome. Without this, that guard would outlive its window for the life of the sheet,
+		/// and a Reshuffle arriving from another device would be filtered out over a full pool.
+		internal mutating func dropGuardsThePoolNoLongerOffers() {
+			let offered = Set(pool.map(\.id))
+			dealt = dealt.filter { offered.contains($0.key) }
+		}
+
 		/// Unguards a card because the deal that guarded it has learnt what happened.
 		///
 		/// The token is checked rather than trusted: a deal that lands after a Reshuffle has
@@ -278,6 +298,13 @@ public struct RandomiseFeature {
 		/// The deck is back, so deal from it. Sent by ``reshuffleAndDeal(_:)`` once the delete
 		/// has landed and the pool has been refilled — never by the view.
 		case deckReshuffled
+		/// The pool has just been reloaded, so guards it no longer offers can go. Sent by
+		/// ``deal(_:)`` — never by the view — after a reload that landed.
+		///
+		/// Sweeps up after the one case ``dealSettled(itemID:generation:)`` cannot reach: a deal
+		/// whose write committed under a reload that threw ends without settling, so some *later*
+		/// deal's reload is the only thing left to notice its card is gone.
+		case poolReloaded
 		/// A deal has learnt what happened to it, so the card it guarded can be unguarded. Sent
 		/// by ``deal(_:)`` — never by the view — on a write that failed, and on a write that
 		/// committed with a reload behind it that landed. **Not** sent when the reload threw: see
@@ -306,6 +333,9 @@ public struct RandomiseFeature {
 
 			case let .dealSettled(itemID, generation):
 				state.dealSettled(itemID, from: generation)
+
+			case .poolReloaded:
+				state.dropGuardsThePoolNoLongerOffers()
 
 			case .deckReshuffled:
 				// The cards are back in the database, so they are back in this sheet's reckoning
@@ -401,6 +431,10 @@ public struct RandomiseFeature {
 			// even when it hands the card back, because that means another device reshuffled.
 			guard reloaded != nil else { return }
 			try store.send(.dealSettled(itemID: item.id, generation: generation))
+			// And a sweep, because this deal can only speak for its own card. A guard left behind
+			// by a deal whose reload threw has no one else to clear it, and the pool this reload
+			// produced is the first fresh evidence since.
+			try store.send(.poolReloaded)
 		}
 	}
 

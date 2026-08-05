@@ -1116,6 +1116,9 @@ extension CombineFeatureTests {
 			$0.dealt = [:]
 			$0.pool = []
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 
 		// The row names both ids, unlike a `ListDraw`: an Item belongs to any number of Combos,
 		// so its own id would not say which of them dealt it. And the id is not written out —
@@ -1193,6 +1196,9 @@ extension CombineFeatureTests {
 			$0.dealt = [:]
 			$0.pool = pool.filter { !dealt.contains($0) }
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 
 		// Then right through to the last card. Which card each draw lands on is the generator's
 		// business, and so is whether the row that removes it has landed by the time the store is
@@ -1216,6 +1222,9 @@ extension CombineFeatureTests {
 				$0.dealt = [:]
 				$0.pool = pool.filter { !dealt.contains($0) }
 			}
+			// The sweep that follows every landed reload. It moves nothing here: this deal
+			// settled its own guard a moment ago, and there is no orphan to collect.
+			await store.receive(\.poolReloaded)
 		}
 
 		// The multiset of what came out *is* the pool, titles and all.
@@ -1271,6 +1280,9 @@ extension CombineFeatureTests {
 			$0.dealt = [:]
 			$0.pool = []
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 
 		// One direction: the Combo's deal wrote its own row and left Lunch's exactly as it was.
 		#expect(try await draws().map(\.itemID) == [UUID(-1)])

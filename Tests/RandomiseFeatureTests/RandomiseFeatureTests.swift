@@ -292,6 +292,9 @@ extension RandomiseFeatureTests {
 			$0.dealt = [:]
 			$0.pool = []
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 
 		// The other iPhone reshuffles. Not a gesture this sheet owns: the rows go, and the pool
 		// refills underneath it through the observation.
@@ -321,41 +324,79 @@ extension RandomiseFeatureTests {
 			$0.dealt = [:]
 			$0.pool = pool.filter { $0.id != dealt.id }
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 	}
 
 	@Test
 	internal func aLateDealCannotClearAGuardBelongingToTheDealAfterIt() async throws {
-		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza", "Ramen"])
+		// **One card, so the re-deal below is forced to be the same card.** With two, the
+		// post-Reshuffle draw might pick the other one, and settling Pizza's old generation would
+		// then be a no-op because no Pizza guard exists at all — the assertion would hold with
+		// `dealSettled` ignoring generations entirely. The ABA case is the whole subject here, so
+		// the pool is built to make it unavoidable.
+		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza"])
 		let pizza = try #require(pool.first)
 		var state = RandomiseFeature.State(scope: .list(deck))
 
 		// Unmounted, so nothing settles on its own and the orderings a running store cannot be
-		// made to produce can be written down here directly. This is the whole of what the token
-		// is for.
+		// made to produce can be written down directly. This is the whole of what the token is for.
 		state.draw()
-		state.draw()
-		let firstGeneration = try #require(state.dealt[pizza.id])
+		#expect(state.dealt == [pizza.id: 1])
 
-		// Reshuffle puts the deck back and deals again, so Pizza can be guarded a second time — by
-		// a different draw, and so under a different token.
+		// Reshuffle puts the deck back and deals again, so Pizza is guarded a second time — by a
+		// different draw, and so under a different token.
 		state.putTheDeckBack()
 		#expect(state.dealt.isEmpty)
 		state.draw()
-		let secondGeneration = try #require(state.dealt[pizza.id] ?? state.dealt.values.first)
-		#expect(secondGeneration > firstGeneration)
+		#expect(state.result?.item == pizza)
+		#expect(state.dealt == [pizza.id: 2])
 
 		// **The deal from before the Reshuffle now lands.** Keyed on the Item alone it would clear
 		// the guard the deal *after* it is relying on, and the next tap could deal that card twice
 		// — a `ComboDraw` row silently, since that table has no key to refuse one. The token makes
-		// it a no-op instead.
-		let guardsBefore = state.dealt
-		state.dealSettled(pizza.id, from: firstGeneration)
-		#expect(state.dealt == guardsBefore)
+		// it a no-op instead, and this assertion fails if generations stop being compared.
+		state.dealSettled(pizza.id, from: 1)
+		#expect(state.dealt == [pizza.id: 2])
 
 		// And the deal that actually owns the guard clears it.
-		let current = try #require(state.dealt.first)
-		state.dealSettled(current.key, from: current.value)
-		#expect(state.dealt[current.key] == nil)
+		state.dealSettled(pizza.id, from: 2)
+		#expect(state.dealt.isEmpty)
+	}
+
+	@Test
+	internal func aGuardWhoseReloadThrewIsSweptUpByALaterReload() async throws {
+		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza", "Ramen"])
+		let pizza = try #require(pool.first)
+		var state = RandomiseFeature.State(scope: .list(deck))
+
+		// The one outcome a deal cannot settle for itself: the write commits, the reload throws,
+		// and the deal ends without ever learning whether the card is spent. Seeded as the world
+		// that leaves behind — a committed row, a pool that never refreshed, and a guard nobody is
+		// coming back for.
+		state.draw()
+		#expect(state.dealt == [pizza.id: 1])
+		try await database.write { db in
+			try ListDraw.insert { ListDraw(itemID: pizza.id, createdAt: .seed) }.execute(db)
+		}
+
+		// A later deal's reload is the first fresh evidence since, and it sweeps the orphan up:
+		// the fresh pool no longer offers Pizza, so its row is committed and the guard is
+		// redundant whichever deal made it. Without this the entry would outlive the sheet's whole
+		// life, and a Reshuffle from another device would be filtered out over a full pool.
+		try await state.$pool.load()
+		state.dropGuardsThePoolNoLongerOffers()
+		#expect(state.dealt.isEmpty)
+
+		// And a sweep never touches a guard that is still doing work. Ramen is in flight and the
+		// pool is still offering it, which is exactly the ABA case the token protects — so the two
+		// rules cannot come into conflict.
+		state.draw()
+		let ramen = try #require(state.result?.item)
+		#expect(ramen != pizza)
+		state.dropGuardsThePoolNoLongerOffers()
+		#expect(state.dealt == [ramen.id: 2])
 	}
 
 	@Test
@@ -399,6 +440,9 @@ extension RandomiseFeatureTests {
 			$0.dealt = [:]
 			$0.pool = []
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 
 		// The whole deck has now been dealt exactly once, two of them by the seed and this one
 		// by the feature: the multiset of what came out *is* the pool.
@@ -422,6 +466,9 @@ extension RandomiseFeatureTests {
 			$0.dealt = [:]
 			$0.pool = []
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 
 		// Exhaustion lands on the draw *after* the last card, not on the last card itself: the
 		// result stays up until a re-roll goes looking for one that is not there. The token
@@ -461,6 +508,9 @@ extension RandomiseFeatureTests {
 			$0.dealt = [:]
 			$0.pool = pool.filter { $0.id != dealt.id }
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 		// One row, for the card just dealt: Reshuffle put both of the old ones back.
 		#expect(try await draws() == [dealt.id])
 	}
@@ -497,6 +547,9 @@ extension RandomiseFeatureTests {
 			$0.dealt = [:]
 			$0.pool = pool.filter { !dealt.contains($0) }
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 
 		// Then right through to the last card. Which card each draw lands on is the generator's
 		// business, and so is whether the row that removes it has landed by the time the store
@@ -521,6 +574,9 @@ extension RandomiseFeatureTests {
 				$0.dealt = [:]
 				$0.pool = pool.filter { !dealt.contains($0) }
 			}
+			// The sweep that follows every landed reload. It moves nothing here: this deal
+			// settled its own guard a moment ago, and there is no orphan to collect.
+			await store.receive(\.poolReloaded)
 		}
 
 		#expect(dealt.count == pool.count)
@@ -556,6 +612,9 @@ extension RandomiseFeatureTests {
 			$0.dealt = [:]
 			$0.pool = []
 		}
+		// The sweep that follows every landed reload. It moves nothing here: this deal
+		// settled its own guard a moment ago, and there is no orphan to collect.
+		await store.receive(\.poolReloaded)
 		#expect(try await draws() == [pizza.id])
 
 		// **Again** stays live where a plain one-item List disables it. No draw of a Deck's is a
