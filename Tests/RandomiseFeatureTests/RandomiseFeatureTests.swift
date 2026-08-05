@@ -260,7 +260,9 @@ extension RandomiseFeatureTests {
 
 		#expect(first != second)
 		#expect(Set([first, second]) == Set(pool))
-		#expect(state.dealt == Set(pool.map(\.id)))
+		// Each guarded against the token of the draw that dealt it, which is what lets a deal
+		// settle its own guard and no one else's.
+		#expect(state.dealt == [first.id: 1, second.id: 2])
 
 		// The third finds nothing left to deal and lands on exhaustion, off a pool that is still
 		// showing both cards. That is the correct answer: the deck is spent even though the
@@ -280,14 +282,14 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [ramen.id]
+			$0.dealt = [ramen.id: 1]
 			$0.drawToken = 1
 			$0.result = .item(ramen)
 		}
-		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
 			// The row has landed and the pool has caught up, so this sheet's own note about the
 			// card has nothing left to say — the query is the record now.
-			$0.dealt = []
+			$0.dealt = [:]
 			$0.pool = []
 		}
 
@@ -315,45 +317,45 @@ extension RandomiseFeatureTests {
 		}
 		let dealt = try #require(store.result?.item)
 		#expect(pool.contains(dealt))
-		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
-			$0.dealt = []
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = [:]
 			$0.pool = pool.filter { $0.id != dealt.id }
 		}
 	}
 
 	@Test
-	internal func aReloadOnlyDropsGuardsForCardsThePoolHasStoppedOffering() async throws {
+	internal func aLateDealCannotClearAGuardBelongingToTheDealAfterIt() async throws {
 		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza", "Ramen"])
+		let pizza = try #require(pool.first)
 		var state = RandomiseFeature.State(scope: .list(deck))
 
-		// Unmounted, so nothing wrote a row: both cards are spent as far as this sheet is
-		// concerned and the pool has caught up with neither.
+		// Unmounted, so nothing settles on its own and the orderings a running store cannot be
+		// made to produce can be written down here directly. This is the whole of what the token
+		// is for.
 		state.draw()
 		state.draw()
-		#expect(state.dealt == Set(pool.map(\.id)))
+		let firstGeneration = try #require(state.dealt[pizza.id])
 
-		// **A reconcile against a pool that is still offering them keeps both.** This is the
-		// invariant the whole guard rests on, and the two ways of getting it wrong both show up
-		// here: a settlement keyed on the write finishing would clear a card whose row committed
-		// but whose reload threw, and a settlement keyed on the Item alone would let a deal from
-		// before a Reshuffle clear the guard belonging to the deal after it. Neither can happen
-		// to a rule that only ever drops what the pool has stopped handing out.
-		state.dropCardsThePoolNoLongerOffers()
-		#expect(state.dealt == Set(pool.map(\.id)))
-		#expect(state.pool == pool)
-
-		// And once the rows exist and the pool has been reloaded, the guards go — the query is
-		// refusing those cards on its own, so the set has nothing left to add. That is what stops
-		// it outliving its window and outvoting a Reshuffle from another device.
-		try await database.write { db in
-			for item in pool {
-				try ListDraw.insert { ListDraw(itemID: item.id, createdAt: .seed) }.execute(db)
-			}
-		}
-		try await state.$pool.load()
-		state.dropCardsThePoolNoLongerOffers()
-		#expect(state.pool.isEmpty)
+		// Reshuffle puts the deck back and deals again, so Pizza can be guarded a second time — by
+		// a different draw, and so under a different token.
+		state.putTheDeckBack()
 		#expect(state.dealt.isEmpty)
+		state.draw()
+		let secondGeneration = try #require(state.dealt[pizza.id] ?? state.dealt.values.first)
+		#expect(secondGeneration > firstGeneration)
+
+		// **The deal from before the Reshuffle now lands.** Keyed on the Item alone it would clear
+		// the guard the deal *after* it is relying on, and the next tap could deal that card twice
+		// — a `ComboDraw` row silently, since that table has no key to refuse one. The token makes
+		// it a no-op instead.
+		let guardsBefore = state.dealt
+		state.dealSettled(pizza.id, from: firstGeneration)
+		#expect(state.dealt == guardsBefore)
+
+		// And the deal that actually owns the guard clears it.
+		let current = try #require(state.dealt.first)
+		state.dealSettled(current.key, from: current.value)
+		#expect(state.dealt[current.key] == nil)
 	}
 
 	@Test
@@ -381,7 +383,7 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [tacos.id]
+			$0.dealt = [tacos.id: 1]
 			$0.drawToken = 1
 			$0.result = .item(tacos)
 		}
@@ -390,11 +392,11 @@ extension RandomiseFeatureTests {
 		// dealt back out of the query the pool is. That churn is what keeping the pool in state
 		// costs, and it is asserted rather than hidden (ADR-0021).
 		//
-		// It travels in this closure because the deal announces itself: `poolReloaded` is sent
+		// It travels in this closure because the deal announces itself: `dealSettled` is sent
 		// once the write has landed *and* the pool has been reloaded, so the two changes belong
 		// to one action and the test no longer has to reach for `settle(_:)` to see them.
-		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
-			$0.dealt = []
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = [:]
 			$0.pool = []
 		}
 
@@ -412,12 +414,12 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [ramen.id]
+			$0.dealt = [ramen.id: 1]
 			$0.drawToken = 1
 			$0.result = .item(ramen)
 		}
-		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
-			$0.dealt = []
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = [:]
 			$0.pool = []
 		}
 
@@ -450,13 +452,13 @@ extension RandomiseFeatureTests {
 			$0.result = store.result
 			$0.pool = pool
 		}
-		#expect(store.dealt == Set(store.result?.item.map { [$0.id] } ?? []))
+		#expect(store.dealt.map(\.key) == store.result?.item.map { [$0.id] })
 
 		let dealt = try #require(store.result?.item)
 		#expect(pool.contains(dealt))
 
-		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
-			$0.dealt = []
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = [:]
 			$0.pool = pool.filter { $0.id != dealt.id }
 		}
 		// One row, for the card just dealt: Reshuffle put both of the old ones back.
@@ -491,8 +493,8 @@ extension RandomiseFeatureTests {
 			$0.pool = pool
 		}
 		var dealt = [try #require(store.result?.item)]
-		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
-			$0.dealt = []
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = [:]
 			$0.pool = pool.filter { !dealt.contains($0) }
 		}
 
@@ -515,8 +517,8 @@ extension RandomiseFeatureTests {
 			// Each deal settles before the next tap, which is what keeps `dealt` down to the
 			// in-flight window rather than accumulating the whole run. The pool it leaves behind
 			// is the deck minus everything dealt so far.
-			await store.receive(\.poolReloaded, timeout: .seconds(1)) {
-				$0.dealt = []
+			await store.receive(\.dealSettled, timeout: .seconds(1)) {
+				$0.dealt = [:]
 				$0.pool = pool.filter { !dealt.contains($0) }
 			}
 		}
@@ -546,12 +548,12 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [pizza.id]
+			$0.dealt = [pizza.id: 1]
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
-		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
-			$0.dealt = []
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = [:]
 			$0.pool = []
 		}
 		#expect(try await draws() == [pizza.id])
