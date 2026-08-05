@@ -1108,11 +1108,14 @@ extension CombineFeatureTests {
 			$0.result = .item(sushi)
 		}
 
-		try await settle(store)
 		// The pool shrinks by one on every draw, because the row the draw wrote takes the Item it
-		// dealt back out of the query the pool is (ADR-0021). Read rather than `expect`ed: a
-		// `@FetchAll` drives no assertion of its own and nothing else has moved alongside it.
-		#expect(store.pool.isEmpty)
+		// dealt back out of the query the pool is (ADR-0021). It travels in this closure because
+		// the deal announces itself: `dealSettled` is sent once the write has landed *and* the
+		// pool has been reloaded, so the two changes belong to one action.
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = []
+		}
 
 		// The row names both ids, unlike a `ListDraw`: an Item belongs to any number of Combos,
 		// so its own id would not say which of them dealt it. And the id is not written out —
@@ -1186,6 +1189,10 @@ extension CombineFeatureTests {
 			$0.pool = pool
 		}
 		var dealt = [try #require(store.result?.item)]
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = pool.filter { !dealt.contains($0) }
+		}
 
 		// Then right through to the last card. Which card each draw lands on is the generator's
 		// business, and so is whether the row that removes it has landed by the time the store is
@@ -1203,8 +1210,12 @@ extension CombineFeatureTests {
 			#expect(!dealt.contains(card))
 			dealt.append(card)
 
-			try await settle(store)
-			#expect(store.pool == pool.filter { !dealt.contains($0) })
+			// Each deal settles before the next tap, which is what keeps `dealt` down to the
+			// in-flight window rather than accumulating the whole run.
+			await store.receive(\.dealSettled, timeout: .seconds(1)) {
+				$0.dealt = []
+				$0.pool = pool.filter { !dealt.contains($0) }
+			}
 		}
 
 		// The multiset of what came out *is* the pool, titles and all.
@@ -1217,7 +1228,9 @@ extension CombineFeatureTests {
 		// the stale-pool window silent on this surface until the sheet started filtering against
 		// everything it had dealt.
 		#expect(try await draws().count == pool.count)
-		#expect(store.dealt == Set(pool.map(\.id)))
+		// And the sheet is holding nothing of its own: every deal has settled, so the table is
+		// the whole record.
+		#expect(store.dealt.isEmpty)
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
 		store.send(.againButtonTapped) {
@@ -1254,7 +1267,10 @@ extension CombineFeatureTests {
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
-		try await settle(store)
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = []
+		}
 
 		// One direction: the Combo's deal wrote its own row and left Lunch's exactly as it was.
 		#expect(try await draws().map(\.itemID) == [UUID(-1)])
@@ -1551,18 +1567,6 @@ extension CombineFeatureTests {
 	private func reloadIndex(_ store: TestStore<CombineFeature>) async throws {
 		try await store.state.$listCount.load()
 		try await store.state.$summaries.load()
-	}
-
-	/// Waits for a deal the randomise sheet started, then hands the pool the world it left
-	/// behind.
-	///
-	/// A draw's row is written from a task, so a test that read the pool straight afterwards
-	/// would be racing it. The empty write queues behind that insert on the same serialised
-	/// writer, which is what makes the wait a fact rather than a sleep; the load is the one
-	/// ``reloadIndex(_:)`` explains.
-	private func settle(_ store: TestStore<RandomiseFeature>) async throws {
-		try await database.write { _ in }
-		try await store.state.$pool.load()
 	}
 
 	private func seed(_ write: @escaping @Sendable (Database) throws -> Void) async throws {

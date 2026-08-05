@@ -272,6 +272,56 @@ extension RandomiseFeatureTests {
 	}
 
 	@Test
+	internal func aDeckReshuffledOnAnotherDeviceIsDealableAgainWithoutClosingTheSheet() async throws {
+		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza", "Ramen"], dealing: ["Pizza"])
+		let ramen = try #require(pool.last)
+
+		// Resumed one card in, so the opening draw is the last card this Deck has.
+		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+			RandomiseFeature()
+		} changes: {
+			$0.dealt = [ramen.id]
+			$0.drawToken = 1
+			$0.result = .item(ramen)
+		}
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			// The row has landed and the pool has caught up, so this sheet's own note about the
+			// card has nothing left to say — the query is the record now.
+			$0.dealt = []
+			$0.pool = []
+		}
+
+		// The other iPhone reshuffles. Not a gesture this sheet owns: the rows go, and the pool
+		// refills underneath it through the observation.
+		try await database.write { db in
+			try ListDraw.inList(UUID(-1)).delete().execute(db)
+		}
+		// Read rather than `expect`ed: nothing was sent, so there is no action whose changes this
+		// could be. The refresh travels in the next assertion's closure instead.
+		try await store.state.$pool.load()
+		#expect(store.pool == pool)
+
+		// **The deck is dealable again, with the sheet still open.** `dealt` is what the draw
+		// filters against, so a set that outlived its write window would hold both cards here
+		// and answer "That's the whole deck" over a full pool — contradicting the rule that
+		// Reshuffle puts the cards back *everywhere*, and leaving this device stuck until the
+		// sheet closed.
+		#expect(store.canDrawAgain)
+		store.send(.againButtonTapped) {
+			$0.dealt = store.dealt
+			$0.drawToken = 2
+			$0.pool = pool
+			$0.result = store.result
+		}
+		let dealt = try #require(store.result?.item)
+		#expect(pool.contains(dealt))
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = pool.filter { $0.id != dealt.id }
+		}
+	}
+
+	@Test
 	internal func aPlainListKeepsNoMemoryOfWhatItHasDrawn() async throws {
 		let (lunch, _) = try await seedLunch(with: ["Pizza", "Ramen"])
 		var state = RandomiseFeature.State(scope: .list(lunch))
@@ -301,16 +351,17 @@ extension RandomiseFeatureTests {
 			$0.result = .item(tacos)
 		}
 
-		try await settle(store)
-		// The pool shrinks by one on every draw, because the row the draw wrote takes the Item
-		// it dealt back out of the query the pool is. That churn is what keeping the pool in
-		// state costs, and it is asserted rather than hidden (ADR-0021).
+		// The pool shrinks by one on every draw, because the row the draw wrote takes the Item it
+		// dealt back out of the query the pool is. That churn is what keeping the pool in state
+		// costs, and it is asserted rather than hidden (ADR-0021).
 		//
-		// Read rather than `expect`ed: a `@FetchAll` drives no assertion of its own, and
-		// nothing else has moved here for it to be compared alongside — the same rule
-		// ``ListsFeatureTests`` states in full. Where a later draw *does* move something, the
-		// pool travels in that assertion's closure.
-		#expect(store.pool.isEmpty)
+		// It travels in this closure because the deal announces itself: `dealSettled` is sent
+		// once the write has landed *and* the pool has been reloaded, so the two changes belong
+		// to one action and the test no longer has to reach for `settle(_:)` to see them.
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = []
+		}
 
 		// The whole deck has now been dealt exactly once, two of them by the seed and this one
 		// by the feature: the multiset of what came out *is* the pool.
@@ -330,8 +381,10 @@ extension RandomiseFeatureTests {
 			$0.drawToken = 1
 			$0.result = .item(ramen)
 		}
-		try await settle(store)
-		#expect(store.pool.isEmpty)
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = []
+		}
 
 		// Exhaustion lands on the draw *after* the last card, not on the last card itself: the
 		// result stays up until a re-roll goes looking for one that is not there. The token
@@ -340,12 +393,10 @@ extension RandomiseFeatureTests {
 		store.send(.againButtonTapped) {
 			$0.drawToken = 2
 			$0.result = .exhausted
-			// The draw that emptied it moved nothing else, so this is where that refresh is
-			// compared: a snapshot carries the whole state, whatever caused it to be taken.
-			$0.pool = []
 		}
-		// Exhaustion spends nothing — there was nothing left to spend.
-		#expect(store.dealt == [ramen.id])
+		// Exhaustion spends nothing — there was nothing to spend — so nothing is recorded and
+		// no deal settles.
+		#expect(store.dealt.isEmpty)
 
 		// Reshuffle deletes every row belonging to this List's Items and deals from the deck it
 		// has just put back. Nothing here changes synchronously: the delete, the refill and the
@@ -369,8 +420,10 @@ extension RandomiseFeatureTests {
 		let dealt = try #require(store.result?.item)
 		#expect(pool.contains(dealt))
 
-		try await settle(store)
-		#expect(store.pool == pool.filter { $0.id != dealt.id })
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = pool.filter { $0.id != dealt.id }
+		}
 		// One row, for the card just dealt: Reshuffle put both of the old ones back.
 		#expect(try await draws() == [dealt.id])
 	}
@@ -403,6 +456,10 @@ extension RandomiseFeatureTests {
 			$0.pool = pool
 		}
 		var dealt = [try #require(store.result?.item)]
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = pool.filter { !dealt.contains($0) }
+		}
 
 		// Then right through to the last card. Which card each draw lands on is the generator's
 		// business, and so is whether the row that removes it has landed by the time the store
@@ -420,18 +477,23 @@ extension RandomiseFeatureTests {
 			#expect(!dealt.contains(card))
 			dealt.append(card)
 
-			try await settle(store)
-			#expect(store.pool == pool.filter { !dealt.contains($0) })
+			// Each deal settles before the next tap, which is what keeps `dealt` down to the
+			// in-flight window rather than accumulating the whole run. The pool it leaves behind
+			// is the deck minus everything dealt so far.
+			await store.receive(\.dealSettled, timeout: .seconds(1)) {
+				$0.dealt = []
+				$0.pool = pool.filter { !dealt.contains($0) }
+			}
 		}
 
 		#expect(dealt.count == pool.count)
 		#expect(Set(dealt) == Set(pool))
 		#expect(dealt.map(\.title).sorted() == titles.sorted())
 		#expect(try await Set(draws()) == Set(pool.map(\.id)))
-		// The sheet's own reckoning agrees with the table, card for card. It is the thing the
-		// draw filters against, so a drift between the two is a card dealt twice or one never
-		// dealt at all.
-		#expect(store.dealt == Set(pool.map(\.id)))
+		// And the sheet is holding nothing of its own: every deal has settled, so the table is
+		// the whole record. A set still carrying the run would be the thing that outvotes a
+		// Reshuffle arriving from another device.
+		#expect(store.dealt.isEmpty)
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
 		store.send(.againButtonTapped) {
@@ -453,8 +515,10 @@ extension RandomiseFeatureTests {
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
-		try await settle(store)
-		#expect(store.pool.isEmpty)
+		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			$0.dealt = []
+			$0.pool = []
+		}
 		#expect(try await draws() == [pizza.id])
 
 		// **Again** stays live where a plain one-item List disables it. No draw of a Deck's is a
@@ -524,18 +588,6 @@ extension RandomiseFeatureTests {
 		try await database.read { db in
 			try ListDraw.inList(UUID(-1)).order { ($0.createdAt, $0.itemID) }.select { $0.itemID }.fetchAll(db)
 		}
-	}
-
-	/// Waits for a deal the feature started, then hands the pool the world it left behind.
-	///
-	/// A draw's row is written from a task, so a test that read the pool straight afterwards
-	/// would be racing it. The empty write queues behind that insert on the same serialised
-	/// writer, which is what makes the wait a fact rather than a sleep; the load is the same
-	/// ``ListDetailTests/reloadItems(_:)`` asks for, because a database observation arrives on
-	/// its own schedule too.
-	private func settle(_ store: TestStore<RandomiseFeature>) async throws {
-		try await database.write { _ in }
-		try await store.state.$pool.load()
 	}
 }
 
