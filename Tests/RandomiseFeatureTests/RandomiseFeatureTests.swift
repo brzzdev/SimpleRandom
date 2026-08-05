@@ -238,28 +238,49 @@ extension RandomiseFeatureTests {
 	}
 
 	@Test
-	internal func aDeckNeverDealsTheCardItIsShowing() async throws {
+	internal func aDeckNeverDealsACardItHasAlreadyDealtHoweverStaleThePoolIs() async throws {
 		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza", "Ramen"])
 		var state = RandomiseFeature.State(scope: .list(deck))
 
 		// Unmounted, so nothing records these draws and the pool never shrinks: this is exactly
 		// the state a re-roll meets when it arrives before the row the last deal is writing has
-		// landed. The deck's own rule holds against it — the card on screen has been dealt,
-		// whatever the pool still says — so the second draw is the other card rather than the
-		// one already on screen.
+		// landed. The deck's own rule holds against it — a card it has dealt is spent, whatever
+		// the pool still says.
 		//
-		// One card deep, which is one deal deep, which is as stale as the pool can be: a draw
-		// starts the write that removes its own card, and the draw after it is the only one
-		// that can arrive before that write lands.
+		// **Three draws, not two.** The window is as deep as the user can tap, not one deal
+		// deep: every draw arriving before the writes land sees the same unshrunk pool. An
+		// earlier version filtered only the card on screen, which survived the second draw and
+		// dealt the first card again on the third — the sheet showing a card the deck had spent,
+		// and on the Combine path a second `ComboDraw` row landing silently for it, since
+		// `comboDraws` is keyed on a surrogate id.
 		state.draw()
 		let first = try #require(state.result?.item)
 		state.draw()
 		let second = try #require(state.result?.item)
 
-		#expect(state.pool == pool)
 		#expect(first != second)
 		#expect(Set([first, second]) == Set(pool))
-		#expect(state.drawToken == 2)
+		#expect(state.dealt == Set(pool.map(\.id)))
+
+		// The third finds nothing left to deal and lands on exhaustion, off a pool that is still
+		// showing both cards. That is the correct answer: the deck is spent even though the
+		// database has not been told yet.
+		state.draw()
+		#expect(state.result == .exhausted)
+		#expect(state.pool == pool)
+		#expect(state.drawToken == 3)
+	}
+
+	@Test
+	internal func aPlainListKeepsNoMemoryOfWhatItHasDrawn() async throws {
+		let (lunch, _) = try await seedLunch(with: ["Pizza", "Ramen"])
+		var state = RandomiseFeature.State(scope: .list(lunch))
+
+		// The other side of the rule above: nothing is spent on the plain path, so the filter has
+		// nothing to filter and repeats stay legal (ADR-0004). Asserted because `dealt` is the
+		// one piece of state that could quietly turn a plain List into a Deck.
+		for _ in 1...10 { state.draw() }
+		#expect(state.dealt.isEmpty)
 	}
 
 	@Test
@@ -275,6 +296,7 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
+			$0.dealt = [tacos.id]
 			$0.drawToken = 1
 			$0.result = .item(tacos)
 		}
@@ -304,6 +326,7 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
+			$0.dealt = [ramen.id]
 			$0.drawToken = 1
 			$0.result = .item(ramen)
 		}
@@ -321,6 +344,8 @@ extension RandomiseFeatureTests {
 			// compared: a snapshot carries the whole state, whatever caused it to be taken.
 			$0.pool = []
 		}
+		// Exhaustion spends nothing — there was nothing left to spend.
+		#expect(store.dealt == [ramen.id])
 
 		// Reshuffle deletes every row belonging to this List's Items and deals from the deck it
 		// has just put back. Nothing here changes synchronously: the delete, the refill and the
@@ -331,9 +356,15 @@ extension RandomiseFeatureTests {
 			// Two cards are live again, so which one comes out is the generator's business and
 			// not this suite's. Read from the store rather than written down; the claims worth
 			// making are the two `#expect`s below and the pool the deal leaves behind.
+			//
+			// Reshuffle empties what this sheet has spent before dealing, so this holds the one
+			// card just dealt and not the one dealt before it — otherwise the put-back cards
+			// would still be filtered out and the reshuffle would deal into exhaustion.
+			$0.dealt = store.dealt
 			$0.result = store.result
 			$0.pool = pool
 		}
+		#expect(store.dealt == Set(store.result?.item.map { [$0.id] } ?? []))
 
 		let dealt = try #require(store.result?.item)
 		#expect(pool.contains(dealt))
@@ -366,6 +397,8 @@ extension RandomiseFeatureTests {
 		await store.send(.reshuffleButtonTapped)?.value
 		await store.receive(\.deckReshuffled, timeout: .seconds(1)) {
 			$0.drawToken = 2
+			// Emptied by the reshuffle, then holding the one card it dealt straight afterwards.
+			$0.dealt = store.dealt
 			$0.result = store.result
 			$0.pool = pool
 		}
@@ -379,6 +412,7 @@ extension RandomiseFeatureTests {
 		for draw in 2...pool.count {
 			store.send(.againButtonTapped) {
 				$0.drawToken = draw + 1
+				$0.dealt = store.dealt
 				$0.result = store.result
 				$0.pool = store.pool
 			}
@@ -394,6 +428,10 @@ extension RandomiseFeatureTests {
 		#expect(Set(dealt) == Set(pool))
 		#expect(dealt.map(\.title).sorted() == titles.sorted())
 		#expect(try await Set(draws()) == Set(pool.map(\.id)))
+		// The sheet's own reckoning agrees with the table, card for card. It is the thing the
+		// draw filters against, so a drift between the two is a card dealt twice or one never
+		// dealt at all.
+		#expect(store.dealt == Set(pool.map(\.id)))
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
 		store.send(.againButtonTapped) {
@@ -411,6 +449,7 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
+			$0.dealt = [pizza.id]
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}

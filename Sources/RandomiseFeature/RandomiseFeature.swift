@@ -51,6 +51,23 @@ public struct RandomiseFeature {
 			}
 		}
 
+		/// The cards this sheet has dealt, whether or not ``pool`` has caught up with them.
+		///
+		/// **A Deck's pool is a live query, and the row that removes a dealt card is written from
+		/// a task**, so between a deal and its reload the pool still offers cards the deck has
+		/// spent. This is what the draw filters against, and it has to be the whole set: filtering
+		/// only the card on screen survives one stale draw and not two, so a third rapid tap on a
+		/// two-card deck dealt the first card again.
+		///
+		/// Empty on the plain path, where nothing is spent and a repeat is legal (ADR-0004).
+		/// Cleared by Reshuffle, which is what puts the cards back.
+		///
+		/// A card whose insert *failed* stays here, so this sheet will not offer it twice even
+		/// though the database never recorded it. That is the safer half of a state already
+		/// degraded by a reported write failure — the card is available again next time the sheet
+		/// opens, because nothing persisted it.
+		private(set) public var dealt: Set<Item.ID> = []
+
 		/// Incremented on every draw and rendered by nothing.
 		///
 		/// A re-roll landing on the Item already shown changes no other state, so this is the
@@ -170,6 +187,15 @@ public struct RandomiseFeature {
 		/// nothing, and adding the same text twice is the user's own weighting mechanism
 		/// (ADR-0004). A one-item pool therefore always returns that Item.
 		///
+		/// Forgets what this sheet has dealt, because Reshuffle has just deleted the rows that
+		/// recorded it.
+		///
+		/// Paired with the delete rather than folded into ``draw()``: the draw's job is to refuse
+		/// a spent card, and the only thing that unspends one is the rows going.
+		internal mutating func putTheDeckBack() {
+			dealt = []
+		}
+
 		/// Lives on `State` so that the opening draw and a re-roll are literally the same pick —
 		/// one arrives on mount, the other on an action, and both are the feature's own logic
 		/// rather than a client behind a seam, which is what lets a test seed the generator and
@@ -180,14 +206,15 @@ public struct RandomiseFeature {
 			// Lifted out of the closure: `pool` is a property of an `inout self` here, and the
 			// generator's closure is `@Sendable`.
 			//
-			// A Deck never deals the card it is showing. Its pool is a live query and the row
-			// that takes the dealt Item out of it is written from a task, so a re-roll that
-			// arrives before that lands would otherwise see a card the deck has already spent —
-			// and deal it a second time. The rule is the deck's own, applied to the state that
-			// has not caught up with it yet.
+			// **A Deck never deals a card it has already dealt, whatever the pool still says.**
+			// The pool is a live query and the row that takes a dealt Item out of it is written
+			// from a task, so every draw arriving before those writes land sees cards the deck
+			// has spent. The rule is the deck's own, applied to the state that has not caught up
+			// with it yet — and it is applied to ``dealt`` rather than to the card on screen,
+			// because the screen holds one card and the window holds as many as the user can tap
+			// through. Filtering the shown card alone survived one stale draw and not two.
 			let isDeck = scope.drawMode == .deck
-			let showing = result?.item?.id
-			let candidates = isDeck ? pool.filter { $0.id != showing } : pool
+			let candidates = isDeck ? pool.filter { !dealt.contains($0.id) } : pool
 			guard let drawn = withRandomNumberGenerator({ generator in
 				candidates.randomElement(using: &generator)
 			}) else {
@@ -205,6 +232,12 @@ public struct RandomiseFeature {
 				return
 			}
 
+			// Spent here rather than in ``RandomiseFeature/deal(_:)``, which is where the *row* is
+			// written: the row records the deal for every future sitting, and this stops this one
+			// dealing the card again in the window before that row lands. A plain List or Combo
+			// records neither — repeats are legal there, and are the reason the sheet
+			// acknowledges a re-roll at all (ADR-0004, ADR-0017).
+			if isDeck { dealt.insert(drawn.id) }
 			result = .item(drawn)
 			drawToken += 1
 		}
@@ -226,10 +259,19 @@ public struct RandomiseFeature {
 	public var body: some Feature {
 		Update { state, action in
 			switch action {
-			case .againButtonTapped, .deckReshuffled:
+			case .againButtonTapped:
 				// In place, with no memory of the last result: a plain List may deal the same Item
 				// twice in a row, and nothing suppresses it. A Deck cannot repeat, because the
 				// draw below is over what it has not dealt.
+				state.draw()
+				deal(state)
+
+			case .deckReshuffled:
+				// The cards are back in the database, so they are back in this sheet's reckoning
+				// too — before the draw, or every card the deck just put back would still be
+				// filtered out of it and the reshuffle would deal straight back into exhaustion.
+				// The delete this follows is the one thing that makes a spent card live again.
+				state.putTheDeckBack()
 				state.draw()
 				deal(state)
 
