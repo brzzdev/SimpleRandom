@@ -1103,6 +1103,7 @@ extension CombineFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
 			RandomiseFeature()
 		} changes: {
+			$0.dealt = [sushi.id]
 			$0.drawToken = 1
 			$0.result = .item(sushi)
 		}
@@ -1179,6 +1180,8 @@ extension CombineFeatureTests {
 		await store.send(.reshuffleButtonTapped)?.value
 		await store.receive(\.deckReshuffled, timeout: .seconds(1)) {
 			$0.drawToken = 2
+			// Emptied by the reshuffle, then holding the one card it dealt straight afterwards.
+			$0.dealt = store.dealt
 			$0.result = store.result
 			$0.pool = pool
 		}
@@ -1192,6 +1195,7 @@ extension CombineFeatureTests {
 		for draw in 2...pool.count {
 			store.send(.againButtonTapped) {
 				$0.drawToken = draw + 1
+				$0.dealt = store.dealt
 				$0.result = store.result
 				$0.pool = store.pool
 			}
@@ -1208,6 +1212,12 @@ extension CombineFeatureTests {
 		#expect(Set(dealt) == Set(pool))
 		#expect(dealt.map(\.title).sorted() == ["Heat", "Pizza", "Pizza", "Sushi"])
 		#expect(try await Set(draws().map(\.itemID)) == Set(pool.map(\.id)))
+		// One row per card and no more. `comboDraws` is keyed on a surrogate id, so a card dealt
+		// twice would land a second row here rather than trip a constraint — which is what made
+		// the stale-pool window silent on this surface until the sheet started filtering against
+		// everything it had dealt.
+		#expect(try await draws().count == pool.count)
+		#expect(store.dealt == Set(pool.map(\.id)))
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
 		store.send(.againButtonTapped) {
@@ -1240,6 +1250,7 @@ extension CombineFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
 			RandomiseFeature()
 		} changes: {
+			$0.dealt = [pizza.id]
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
