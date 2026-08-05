@@ -51,8 +51,8 @@ public struct RandomiseFeature {
 			}
 		}
 
-		/// The cards this sheet has dealt that ``pool`` has **not caught up with yet** — the
-		/// in-flight window, and nothing beyond it.
+		/// The cards this sheet has dealt **that ``pool`` still offers** — the window where the
+		/// query has not caught up, and nothing beyond it.
 		///
 		/// **A Deck's pool is a live query, and the row that removes a dealt card is written from
 		/// a task**, so between a deal and its reload the pool still offers cards the deck has
@@ -60,17 +60,24 @@ public struct RandomiseFeature {
 		/// the card on screen survives one stale draw and not two, so a third rapid tap on a
 		/// two-card deck dealt the first card again.
 		///
-		/// **An id lives here for exactly that window and no longer.** Once the write has settled
-		/// and the pool has been reloaded, the query is the record and this has nothing left to
-		/// say — so ``poolCaughtUp(with:)`` drops it. A set that outlived the window would
-		/// override synchronised deck state: another device reshuffling refills this pool through
-		/// the observation, and a stale entry would keep filtering those cards out, answering
-		/// "That's the whole deck" over a full pool until the sheet closed. Deck state syncs, and
-		/// Reshuffle puts the cards back *everywhere*.
+		/// **What ends an entry is the pool no longer offering the card, not the write that
+		/// dealt it finishing.** Those look alike and are not: a write can commit and its reload
+		/// still fail, leaving the query offering a card that is genuinely spent; and a card can
+		/// return to the pool because *another* device reshuffled, which no write of ours reports
+		/// at all. So ``dropCardsThePoolNoLongerOffers()`` reconciles against the pool after every
+		/// reload this sheet performs, and keeps whatever the pool is still handing out.
 		///
-		/// An id is dropped whether the write succeeded or failed. A failed insert recorded
-		/// nothing, so the card was never spent and the deck is right to offer it again — and the
-		/// failure has already been reported.
+		/// That is the whole invariant, and it is self-healing in both directions. An entry
+		/// whose reload failed survives, because the stale pool still offers the card — and the
+		/// next reload drops it, because by then the committed row has taken it out. An entry
+		/// added after a Reshuffle survives a *previous* deal's reload landing late, because the
+		/// pool is offering that card again. And an entry the pool has stopped offering needs no
+		/// guard, because the query is already refusing it.
+		///
+		/// A set that outlived the window would override synchronised deck state: another device
+		/// reshuffling refills this pool through the observation, and a stale entry would keep
+		/// filtering those cards out, answering "That's the whole deck" over a full pool until
+		/// the sheet closed. Deck state syncs, and Reshuffle puts the cards back *everywhere*.
 		///
 		/// Empty on the plain path, where nothing is spent and a repeat is legal (ADR-0004).
 		private(set) public var dealt: Set<Item.ID> = []
@@ -194,16 +201,21 @@ public struct RandomiseFeature {
 		/// nothing, and adding the same text twice is the user's own weighting mechanism
 		/// (ADR-0004). A one-item pool therefore always returns that Item.
 		///
-		/// Drops a card from ``dealt`` because its write has settled and the pool has been
-		/// reloaded.
+		/// Reconciles ``dealt`` against a pool that has just been reloaded, keeping only the cards
+		/// the pool is still offering.
 		///
-		/// The query is the record from here on: if the row landed, the card is no longer in the
-		/// pool and this set has nothing to add; if the write failed, the card was never spent
-		/// and the deck should offer it again. Either way the in-flight window has closed, and
-		/// holding the id past it is what would let this sheet outvote a Reshuffle from another
-		/// device.
-		internal mutating func poolCaughtUp(with itemID: Item.ID) {
-			dealt.remove(itemID)
+		/// A card the pool has stopped offering has a committed row behind it, so the query
+		/// refuses it without help and the entry is redundant. A card the pool is still offering
+		/// is either mid-window or genuinely back in the deck, and both want the guard.
+		///
+		/// **Reconciled rather than acknowledged per deal**, which is the distinction the two
+		/// obvious bugs here turn on. Keyed on the id alone, a settlement cannot tell a committed
+		/// write whose reload failed from one that never committed, and cannot tell *which* deal
+		/// of a card it is settling — so a deal from before a Reshuffle could land late and clear
+		/// the guard belonging to the deal after it. Asking the pool sidesteps both, because the
+		/// pool is the thing the draw actually consults.
+		internal mutating func dropCardsThePoolNoLongerOffers() {
+			dealt.formIntersection(pool.map(\.id))
 		}
 
 		/// Forgets what this sheet has dealt, because Reshuffle has just deleted the rows that
@@ -266,13 +278,17 @@ public struct RandomiseFeature {
 
 	public enum Action {
 		case againButtonTapped
-		/// A deal has settled and the pool has been reloaded, so the card it dealt can leave
-		/// ``State/dealt``. Sent by ``deal(_:)`` — never by the view — and sent whether the write
-		/// succeeded or failed, because the in-flight window has closed either way.
-		case dealSettled(Item.ID)
 		/// The deck is back, so deal from it. Sent by ``reshuffleAndDeal(_:)`` once the delete
 		/// has landed and the pool has been refilled — never by the view.
 		case deckReshuffled
+		/// A deal's reload has landed, so ``State/dealt`` can be reconciled against the pool it
+		/// produced. Sent by ``deal(_:)`` — never by the view — and **only when the reload
+		/// actually succeeded**, because a pool that failed to refresh has nothing to reconcile
+		/// against.
+		///
+		/// It carries no Item: which deal reloaded does not matter, only that the pool is fresh.
+		/// That is what makes a reload landing out of order harmless.
+		case poolReloaded
 		case reshuffleButtonTapped
 	}
 
@@ -291,8 +307,8 @@ public struct RandomiseFeature {
 				state.draw()
 				deal(state)
 
-			case .dealSettled(let itemID):
-				state.poolCaughtUp(with: itemID)
+			case .poolReloaded:
+				state.dropCardsThePoolNoLongerOffers()
 
 			case .deckReshuffled:
 				// The cards are back in the database, so they are back in this sheet's reckoning
@@ -361,11 +377,12 @@ public struct RandomiseFeature {
 				// it arrives on its own schedule. Waiting for it here is what stops the next draw
 				// seeing a card that has already gone.
 				try await pool.load()
+				// Inside the error handling and after the load, so it is sent only when the pool
+				// really did refresh. A reload that threw leaves a stale pool with nothing to
+				// reconcile against, and a card whose row committed under it stays guarded until
+				// some later reload lands — which is the safe direction to fail in.
+				try store.send(.poolReloaded)
 			}
-			// Outside the error handling, so it is sent whether the write landed or threw: the
-			// in-flight window has closed either way, and a card left in `State.dealt` past it
-			// would let this sheet outvote a Reshuffle arriving from another device.
-			try store.send(.dealSettled(item.id))
 		}
 	}
 

@@ -1110,9 +1110,9 @@ extension CombineFeatureTests {
 
 		// The pool shrinks by one on every draw, because the row the draw wrote takes the Item it
 		// dealt back out of the query the pool is (ADR-0021). It travels in this closure because
-		// the deal announces itself: `dealSettled` is sent once the write has landed *and* the
+		// the deal announces itself: `poolReloaded` is sent once the write has landed *and* the
 		// pool has been reloaded, so the two changes belong to one action.
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = []
 		}
@@ -1189,7 +1189,7 @@ extension CombineFeatureTests {
 			$0.pool = pool
 		}
 		var dealt = [try #require(store.result?.item)]
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = pool.filter { !dealt.contains($0) }
 		}
@@ -1212,7 +1212,7 @@ extension CombineFeatureTests {
 
 			// Each deal settles before the next tap, which is what keeps `dealt` down to the
 			// in-flight window rather than accumulating the whole run.
-			await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 				$0.dealt = []
 				$0.pool = pool.filter { !dealt.contains($0) }
 			}
@@ -1267,7 +1267,7 @@ extension CombineFeatureTests {
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = []
 		}

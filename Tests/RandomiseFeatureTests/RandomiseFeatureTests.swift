@@ -284,7 +284,7 @@ extension RandomiseFeatureTests {
 			$0.drawToken = 1
 			$0.result = .item(ramen)
 		}
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			// The row has landed and the pool has caught up, so this sheet's own note about the
 			// card has nothing left to say — the query is the record now.
 			$0.dealt = []
@@ -315,10 +315,45 @@ extension RandomiseFeatureTests {
 		}
 		let dealt = try #require(store.result?.item)
 		#expect(pool.contains(dealt))
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = pool.filter { $0.id != dealt.id }
 		}
+	}
+
+	@Test
+	internal func aReloadOnlyDropsGuardsForCardsThePoolHasStoppedOffering() async throws {
+		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza", "Ramen"])
+		var state = RandomiseFeature.State(scope: .list(deck))
+
+		// Unmounted, so nothing wrote a row: both cards are spent as far as this sheet is
+		// concerned and the pool has caught up with neither.
+		state.draw()
+		state.draw()
+		#expect(state.dealt == Set(pool.map(\.id)))
+
+		// **A reconcile against a pool that is still offering them keeps both.** This is the
+		// invariant the whole guard rests on, and the two ways of getting it wrong both show up
+		// here: a settlement keyed on the write finishing would clear a card whose row committed
+		// but whose reload threw, and a settlement keyed on the Item alone would let a deal from
+		// before a Reshuffle clear the guard belonging to the deal after it. Neither can happen
+		// to a rule that only ever drops what the pool has stopped handing out.
+		state.dropCardsThePoolNoLongerOffers()
+		#expect(state.dealt == Set(pool.map(\.id)))
+		#expect(state.pool == pool)
+
+		// And once the rows exist and the pool has been reloaded, the guards go — the query is
+		// refusing those cards on its own, so the set has nothing left to add. That is what stops
+		// it outliving its window and outvoting a Reshuffle from another device.
+		try await database.write { db in
+			for item in pool {
+				try ListDraw.insert { ListDraw(itemID: item.id, createdAt: .seed) }.execute(db)
+			}
+		}
+		try await state.$pool.load()
+		state.dropCardsThePoolNoLongerOffers()
+		#expect(state.pool.isEmpty)
+		#expect(state.dealt.isEmpty)
 	}
 
 	@Test
@@ -355,10 +390,10 @@ extension RandomiseFeatureTests {
 		// dealt back out of the query the pool is. That churn is what keeping the pool in state
 		// costs, and it is asserted rather than hidden (ADR-0021).
 		//
-		// It travels in this closure because the deal announces itself: `dealSettled` is sent
+		// It travels in this closure because the deal announces itself: `poolReloaded` is sent
 		// once the write has landed *and* the pool has been reloaded, so the two changes belong
 		// to one action and the test no longer has to reach for `settle(_:)` to see them.
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = []
 		}
@@ -381,7 +416,7 @@ extension RandomiseFeatureTests {
 			$0.drawToken = 1
 			$0.result = .item(ramen)
 		}
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = []
 		}
@@ -420,7 +455,7 @@ extension RandomiseFeatureTests {
 		let dealt = try #require(store.result?.item)
 		#expect(pool.contains(dealt))
 
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = pool.filter { $0.id != dealt.id }
 		}
@@ -456,7 +491,7 @@ extension RandomiseFeatureTests {
 			$0.pool = pool
 		}
 		var dealt = [try #require(store.result?.item)]
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = pool.filter { !dealt.contains($0) }
 		}
@@ -480,7 +515,7 @@ extension RandomiseFeatureTests {
 			// Each deal settles before the next tap, which is what keeps `dealt` down to the
 			// in-flight window rather than accumulating the whole run. The pool it leaves behind
 			// is the deck minus everything dealt so far.
-			await store.receive(\.dealSettled, timeout: .seconds(1)) {
+			await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 				$0.dealt = []
 				$0.pool = pool.filter { !dealt.contains($0) }
 			}
@@ -515,7 +550,7 @@ extension RandomiseFeatureTests {
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
-		await store.receive(\.dealSettled, timeout: .seconds(1)) {
+		await store.receive(\.poolReloaded, timeout: .seconds(1)) {
 			$0.dealt = []
 			$0.pool = []
 		}
