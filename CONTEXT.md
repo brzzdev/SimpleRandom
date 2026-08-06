@@ -135,7 +135,9 @@ Both decks are therefore the same mechanism — a row per dealt Item, whose exis
 
 **Decks are independent per surface.** A Combo's draw is governed only by its own `drawMode` and its own `ComboDraw` rows. Member Lists' `drawMode` and `ListDraw` rows are neither read nor written — a Combo always pools every Item of every member List, including ones already dealt within their own List, and drawing from a Combo never writes a `ListDraw` row. "Dealt in Movies" and "dealt in Friday night" are separate facts. Nesting the two deck states was rejected: they compose into behaviour that is hard to predict, and an exhausted member List would silently shrink the pool with nowhere sensible to put its Reshuffle.
 
-A draw row is keyed on the Item's identity and nothing else touches it. A new Item arrives undealt, so adding one to an exhausted Deck un-exhausts it. Editing an Item's title does not delete its draw row — identity is the row, not the text. Switching a Deck back to plain preserves the rows, so switching back resumes where it left off. Nothing resets a Deck on launch or on a timer.
+A draw row is keyed on the Item's identity, and exactly two things delete one: **Reshuffle**, and removing an Item's List from a Combo. A new Item arrives undealt, so adding one to an exhausted Deck un-exhausts it. Editing an Item's title does not delete its draw row — identity is the row, not the text. Switching a Deck back to plain preserves the rows, so switching back resumes where it left off. Nothing resets a Deck on launch or on a timer.
+
+Those last two look opposed, and the line between them is that **draw mode is how a Combo deals; membership is what it deals from.** Changing how you deal does not spend or unspend a card, so switching to plain and back resumes. Changing what is in the deck removes those cards, and their history goes with them: untick Films and this Combo's memory of the Films Items it dealt is gone, everywhere, for good. A member List *deleted* outright does the same by cascade, on both surfaces at once.
 
 Randomness comes from `@Dependency(\.withRandomNumberGenerator)`; the selection, exhaustion and reshuffle logic itself lives in the reducer rather than behind a client, so tests seed the generator and assert real draws.
 
@@ -310,11 +312,11 @@ Mirrors the Lists tab: large title `Combine`, `+`, pull to refresh, no reorder, 
 
 ### Combo detail
 
-Inline navigation title = the Combo's name. `Edit` is the only toolbar item and reopens the one form.
+Inline navigation title = the Combo's name. Toolbar `Edit` reopens the one form, and a Combo Deck carries **Reshuffle** beside it, dimmed until something has been dealt — the Lists tab's toolbar item, for the reason that one exists: it is the only place this Combo's Deck can be put back mid-run, and a member List's own Reshuffle is not a substitute for it. A plain Combo never shows it.
 
 **Member rows** — emoji · name · `N items`. Counts only; never that List's own deck state. Tapping a member row pushes the real List detail. No swipe-to-remove — the section footer says membership is edited in the form.
 
-**Randomise** — the same pinned capsule, with three distinct disabled captions rather than one: `Add a List to randomise` (no members), `The Lists in this Combo have no items` (members, empty pool), and for an exhausted Deck the button becomes **Reshuffle** rather than being disabled.
+**Randomise** — the same pinned capsule, with two distinct disabled captions rather than one: `Add a List to randomise` (no members) and `The Lists in this Combo have no items` (members, empty pool). Live, the caption is the pool: `12 items`, or `Deck · 10 of 13 left` for a Combo Deck — the index row's caption minus the `N Lists` the row needs and this screen's title has already said. For an exhausted Deck the button becomes **Reshuffle** rather than being disabled.
 
 ### Settings
 

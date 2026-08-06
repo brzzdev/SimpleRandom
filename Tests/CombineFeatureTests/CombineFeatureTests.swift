@@ -747,6 +747,7 @@ extension CombineFeatureTests {
 				combo: summary.combo,
 				destination: nil,
 				detail: nil,
+				draws: [],
 				members: [
 					ListOption(itemCount: 2, list: .deckLunch),
 					ListOption(itemCount: 1, list: .films),
@@ -876,6 +877,7 @@ extension CombineFeatureTests {
 				combo: summary.combo,
 				destination: nil,
 				detail: nil,
+				draws: [],
 				members: [ListOption(itemCount: 1, list: .lunch)],
 			)
 		}
@@ -926,6 +928,7 @@ extension CombineFeatureTests {
 				combo: summary.combo,
 				destination: nil,
 				detail: nil,
+				draws: [],
 				members: [ListOption(itemCount: 1, list: deck)],
 			)
 		}
@@ -948,48 +951,8 @@ extension CombineFeatureTests {
 
 		// Not one row moved. Drawing from a Combo writes no `ListDraw` row, so Lunch's own deck
 		// is exactly where it was; and it writes no `ComboDraw` row either, because the Combo is
-		// plain. A Combo Deck's own rows arrive with #25.
+		// plain — a plain Combo pools everything on every tap and keeps no memory of it.
 		#expect(try await listDraws().map(\.itemID) == [UUID(-1)])
-		#expect(try await draws().isEmpty)
-	}
-
-	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
-	internal func aComboDeckDealsPlainlyUntilItHasADeckOfItsOwn() async throws {
-		// A Combo the form has already been able to set to Deck since #23, drawing through a
-		// sheet that has no `ComboDraw` row to deal against until #25.
-		let combo = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
-		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
-		try await seed { db in
-			try db.seed {
-				Models.List.lunch
-				pizza
-				combo
-				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
-			}
-		}
-
-		// The interim is reported, from `State.init`, because a Deck that records nothing is not
-		// the Deck the form offered — see `RandomiseFeature.State.dealsAsDeck`. Built apart from
-		// the store so that only the construction is inside the expectation.
-		var state: RandomiseFeature.State?
-		withExpectedIssue { state = RandomiseFeature.State(scope: .combo(combo)) }
-		let store = TestStore(initialState: try #require(state)) {
-			RandomiseFeature()
-		} changes: {
-			$0.drawToken = 1
-			$0.result = .item(pizza)
-		}
-
-		// It deals plainly: a one-item pool draws that Item every time, **Again** is disabled
-		// exactly as it is for a plain one-item List, and nothing here can reach exhaustion. The
-		// alternative is the failure this pins — a re-roll landing on "That's the whole deck"
-		// and a **Reshuffle** that nothing implements, on a sheet whose only other way out is a
-		// drag.
-		#expect(store.canDrawAgain == false)
-		store.send(.againButtonTapped) {
-			$0.drawToken = 2
-		}
-		#expect(store.result == .item(pizza))
 		#expect(try await draws().isEmpty)
 	}
 
@@ -1016,6 +979,7 @@ extension CombineFeatureTests {
 				combo: summary.combo,
 				destination: nil,
 				detail: nil,
+				draws: [],
 				members: [member],
 			)
 		}
@@ -1052,12 +1016,531 @@ extension CombineFeatureTests {
 	}
 }
 
+// MARK: - The Combo's own Deck
+
+/// A Combo Deck deals each pooled Item at most once, against `ComboDraw` rows of its own
+/// (#25).
+///
+/// The same mechanism as a List's Deck in a second table, so what is worth asserting here is
+/// what *differs*: the subquery is scoped to the Combo, because an Item belongs to any number
+/// of them; and the two surfaces' decks are independent in both directions (ADR-0007). That
+/// each draw is uniform over whatever pool it is handed, and that exhaustion lands on the draw
+/// after the last card rather than on it, are `RandomiseFeatureTests`' claims about
+/// `State.draw()`, made once for both surfaces (ADR-0016) — and restated below as arithmetic
+/// over a *pooled* deck, which is the shape this ticket adds.
+///
+/// The generator note the rest of this suite gives holds throughout: `withRandomNumberGenerator`
+/// has no test value, so a test that draws has to say which generator it draws from. The system
+/// one, deliberately — either the pick is forced by a one-card pool, or the claim is relational
+/// and the result is read from the store rather than written down.
+extension CombineFeatureTests {
+	@Test
+	internal func aComboDeckDrawsOnlyOverPooledItemsItHasNotDealt() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Sushi")
+
+				Models.List.films
+				Item(id: UUID(-3), createdAt: .later, listID: UUID(-2), title: "Heat")
+
+				// Friday night pools both Lists and has dealt Pizza.
+				Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
+				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
+
+				// Weeknights pools Lunch alone and has dealt Sushi — the same table, a different
+				// Combo, and an Item both of them hold.
+				Combo(id: UUID(-2), createdAt: .later, drawMode: .deck, name: "Weeknights")
+				ComboList(id: UUID(-3), comboID: UUID(-2), createdAt: .seed, listID: UUID(-1))
+				ComboDraw(id: UUID(-2), comboID: UUID(-2), createdAt: .seed, itemID: UUID(-2))
+			}
+		}
+		let friday = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		let weeknights = Combo(id: UUID(-2), createdAt: .later, drawMode: .deck, name: "Weeknights")
+
+		// **The subquery is scoped, and this is what that buys.** Friday night has dealt Pizza
+		// and has Sushi and Heat left; Weeknights has dealt Sushi and has Pizza left. An
+		// unscoped `NOT IN comboDraws` — the shape `Item.undealt(in:)` can afford, because an
+		// Item belongs to exactly one List — would leave Friday night only Heat and Weeknights
+		// nothing at all, each Combo emptying the other's deck.
+		#expect(
+			RandomiseFeature.State(scope: .combo(friday)).pool.map(\.title) == ["Sushi", "Heat"]
+		)
+		#expect(
+			RandomiseFeature.State(scope: .combo(weeknights)).pool.map(\.title) == ["Pizza"]
+		)
+
+		// The very same rows, read by the very same Combo turned plain. Switching a Deck back to
+		// plain preserves its rows and pools everything regardless — which is what lets switching
+		// back resume where it left off rather than start again, exactly as a List's does.
+		let plain = Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
+		#expect(
+			RandomiseFeature.State(scope: .combo(plain)).pool.map(\.title)
+				== ["Pizza", "Sushi", "Heat"]
+		)
+	}
+
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func dealingFromAComboDeckWritesItsOwnRowAndTakesTheItemOutOfThePool() async throws {
+		let combo = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		let sushi = Item(id: UUID(-2), createdAt: .later, listID: UUID(-1), title: "Sushi")
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				sushi
+
+				combo
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				// One card already gone, so the pick below is forced and may be written down.
+				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
+			}
+		}
+
+		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
+			RandomiseFeature()
+		} changes: {
+			$0.dealt = [sushi.id]
+			$0.drawToken = 1
+			$0.result = .item(sushi)
+		}
+
+		try await settle(store)
+		// The pool shrinks by one on every draw, because the row the draw wrote takes the Item it
+		// dealt back out of the query the pool is (ADR-0021). Read rather than `expect`ed: a
+		// `@FetchAll` drives no assertion of its own and nothing else has moved alongside it.
+		#expect(store.pool.isEmpty)
+
+		// The row names both ids, unlike a `ListDraw`: an Item belongs to any number of Combos,
+		// so its own id would not say which of them dealt it. And the id is not written out —
+		// no insert site in the app names one (ADR-0011).
+		let rows = try await draws()
+		let dealt = try #require(rows.first { $0.itemID == UUID(-2) })
+		#expect(rows.count == 2)
+		#expect(dealt.comboID == UUID(-1))
+		#expect(dealt.createdAt == .seed)
+		// And not one `ListDraw` row, which is the rule rather than the gap: drawing from a
+		// Combo leaves every member List's own deck exactly as it was (ADR-0007).
+		#expect(try await listDraws().isEmpty)
+	}
+
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func dealingRightThroughAComboDeckProducesEveryPooledCardExactlyOnce() async throws {
+		// Four cards across two member Lists, two of them sharing a title: a Deck deals Items
+		// rather than titles, so "Pizza" in two Lists is two cards and comes out twice. That is
+		// what makes this a claim about a multiset rather than a set — the same reason repetition
+		// is the user's own weighting mechanism (ADR-0004).
+		let combo = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Sushi")
+
+				Models.List.films
+				Item(id: UUID(-3), createdAt: .later, listID: UUID(-2), title: "Pizza")
+				Item(id: UUID(-4), createdAt: .later, listID: UUID(-2), title: "Heat")
+
+				combo
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
+
+				// Seeded spent, so that the one draw a test cannot state — the opening one, which
+				// happens synchronously at mount — is the one draw whose outcome is not a pick.
+				for offset in 0...3 {
+					ComboDraw(
+						id: UUID(-1 - offset),
+						comboID: UUID(-1),
+						createdAt: .seed,
+						itemID: UUID(-1 - offset),
+					)
+				}
+			}
+		}
+		let pool = try await pooledItems()
+		#expect(pool.count == 4)
+
+		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
+			RandomiseFeature()
+		} changes: {
+			$0.drawToken = 1
+			$0.result = .exhausted
+		}
+
+		// The exhausted sheet names the Combo, not a member List: "Every item in *Friday night*
+		// has been dealt once." is the same screen and the same announcement a List Deck shows,
+		// reading its name off the scope (ADR-0016).
+		#expect(store.state.scope.name == "Friday night")
+		#expect(store.canDrawAgain)
+
+		// **Reshuffle deletes that Combo's rows** and deals the first card of the run.
+		await store.send(.reshuffleButtonTapped)?.value
+		await store.receive(\.deckReshuffled, timeout: .seconds(1)) {
+			$0.drawToken = 2
+			// Emptied by the reshuffle, then holding the one card it dealt straight afterwards.
+			$0.dealt = store.dealt
+			$0.result = store.result
+			$0.pool = pool
+		}
+		var dealt = [try #require(store.result?.item)]
+
+		// Then right through to the last card. Which card each draw lands on is the generator's
+		// business, and so is whether the row that removes it has landed by the time the store is
+		// asked — both are read from it rather than written down. The claims are the two
+		// underneath: no card comes out twice, and the pool is always the deck minus what has
+		// been dealt.
+		for draw in 2...pool.count {
+			store.send(.againButtonTapped) {
+				$0.drawToken = draw + 1
+				$0.dealt = store.dealt
+				$0.result = store.result
+				$0.pool = store.pool
+			}
+			let card = try #require(store.result?.item)
+			#expect(!dealt.contains(card))
+			dealt.append(card)
+
+			try await settle(store)
+			#expect(store.pool == pool.filter { !dealt.contains($0) })
+		}
+
+		// The multiset of what came out *is* the pool, titles and all.
+		#expect(dealt.count == pool.count)
+		#expect(Set(dealt) == Set(pool))
+		#expect(dealt.map(\.title).sorted() == ["Heat", "Pizza", "Pizza", "Sushi"])
+		#expect(try await Set(draws().map(\.itemID)) == Set(pool.map(\.id)))
+		// One row per card and no more. `comboDraws` is keyed on a surrogate id, so a card dealt
+		// twice would land a second row here rather than trip a constraint — which is what made
+		// the stale-pool window silent on this surface until the sheet started filtering against
+		// everything it had dealt.
+		#expect(try await draws().count == pool.count)
+		#expect(store.dealt == Set(pool.map(\.id)))
+
+		// And exhaustion lands on the draw after the last card — N + 1, never N.
+		store.send(.againButtonTapped) {
+			$0.drawToken = pool.count + 2
+			$0.result = .exhausted
+			$0.pool = []
+		}
+	}
+
+	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
+	internal func theTwoSurfacesDecksAreIndependentInBothDirections() async throws {
+		// Lunch is a Deck with its one Item already dealt: opened on its own it is exhausted.
+		let deck = Models.List.deckLunch
+		let pizza = Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+		let combo = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		try await seed { db in
+			try db.seed {
+				deck
+				pizza
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+
+				combo
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+			}
+		}
+
+		// **An exhausted member List does not shrink the Combo's pool.** Pizza is in it, because
+		// a Combo pools every Item of every member regardless of what that List has dealt — so
+		// this Combo Deck has a card to deal, and the pick is forced.
+		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
+			RandomiseFeature()
+		} changes: {
+			$0.dealt = [pizza.id]
+			$0.drawToken = 1
+			$0.result = .item(pizza)
+		}
+		try await settle(store)
+
+		// One direction: the Combo's deal wrote its own row and left Lunch's exactly as it was.
+		#expect(try await draws().map(\.itemID) == [UUID(-1)])
+		#expect(try await listDraws().map(\.itemID) == [UUID(-1)])
+
+		// The other: Lunch's own Reshuffle, from the real `ListDetail` — the screen a member row
+		// pushes — puts Lunch's card back and leaves the Combo's deck spent. "Dealt in Lunch" and
+		// "dealt in Friday night" are separate facts, and this is the direction most likely to be
+		// "fixed" by someone who has not read ADR-0007.
+		let listStore = TestStore(initialState: ListDetail.State(list: deck)) { ListDetail() }
+		#expect(listStore.isExhausted)
+		await listStore.send(.reshuffleButtonTapped)?.value
+
+		#expect(try await listDraws().isEmpty)
+		#expect(try await draws().map(\.itemID) == [UUID(-1)])
+
+		// And the Combo is still exhausted with Lunch's deck full: its pool is the Item, and its
+		// own row is the only thing that takes it out.
+		#expect(RandomiseFeature.State(scope: .combo(combo)).pool.isEmpty)
+	}
+
+	@Test
+	internal func theDetailCountsItsOwnDeckDownAndIgnoresADrawOfAnUnpooledItem() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Sushi")
+				Item(id: UUID(-3), createdAt: .seed, listID: UUID(-1), title: "Ramen")
+
+				// Not a member, and its Item is dealt by this Combo — the row a List unticked on
+				// *another* device leaves behind, which ADR-0023's cleanup cannot reach. It must
+				// count for nothing, or the caption reads `1 of 3 left` over a deck that has
+				// dealt one card.
+				Models.List.films
+				Item(id: UUID(-4), createdAt: .seed, listID: UUID(-2), title: "Heat")
+
+				Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
+				ComboDraw(id: UUID(-2), comboID: UUID(-1), createdAt: .later, itemID: UUID(-4))
+			}
+		}
+
+		// The screen's state on its own, with no store around it: what is under test is the
+		// arithmetic the pinned bar's caption is made of, and driving a live query to refresh
+		// underneath a `TestStore` would be testing the observation rather than the arithmetic.
+		let state = ComboDetail.State(
+			combo: Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		)
+
+		// `Deck · 2 of 3 left`, and the button live. The stale draw counts for nothing — the
+		// same condition `ComboSummary.index` joins on, so the row and the screen it opens
+		// cannot come to disagree.
+		#expect(state.draws.map(\.itemID) == [UUID(-1)])
+		#expect(state.dealtCount == 1)
+		#expect(state.remainingCount == 2)
+		#expect(state.randomiseCaption == .deck(remaining: 2, total: 3))
+		#expect(state.canRandomise)
+		#expect(state.isExhausted == false)
+	}
+
+	@Test
+	internal func reshuffleFromASpentComboDeckPutsBackItsOwnRowsAndNoOthers() async throws {
+		let combo = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		try await seed { db in
+			try db.seed {
+				// A member List that is a Deck part-way through its own run, so this Reshuffle has
+				// something it could wrongly put back.
+				Models.List.deckLunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Sushi")
+				ListDraw(itemID: UUID(-1), createdAt: .seed)
+
+				// And a second Combo over the same List, mid-run: "dealt in Friday night" and
+				// "dealt in Weeknights" are separate facts too.
+				Combo(id: UUID(-2), createdAt: .later, drawMode: .deck, name: "Weeknights")
+				ComboList(id: UUID(-2), comboID: UUID(-2), createdAt: .seed, listID: UUID(-1))
+				ComboDraw(id: UUID(-3), comboID: UUID(-2), createdAt: .seed, itemID: UUID(-1))
+
+				combo
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
+				ComboDraw(id: UUID(-2), comboID: UUID(-1), createdAt: .later, itemID: UUID(-2))
+			}
+		}
+		let store = TestStore(initialState: ComboDetail.State(combo: combo)) { ComboDetail() }
+
+		// Spent, and the button reads **Reshuffle** rather than going dim: `canRandomise` stays
+		// true here, and a dimmed Reshuffle would take away the only way out of a spent Combo
+		// Deck.
+		#expect(store.randomiseCaption == .deck(remaining: 0, total: 2))
+		#expect(store.isExhausted)
+		#expect(store.canRandomise)
+
+		await store.send(.reshuffleButtonTapped)?.value
+
+		// This Combo's rows and not one more. Read rather than `expect`ed, for the reason
+		// ``deletingAnEmptyComboDoesNotAskFirst`` gives: Reshuffle moves nothing but a
+		// `@FetchAll`.
+		#expect(try await draws().map(\.comboID) == [UUID(-2)])
+		#expect(try await listDraws().map(\.itemID) == [UUID(-1)])
+
+		try await reloadDraws(store)
+		#expect(store.draws.isEmpty)
+		#expect(store.randomiseCaption == .deck(remaining: 2, total: 2))
+		#expect(store.isExhausted == false)
+	}
+
+	@Test
+	internal func addingAnItemOrAMemberListUnExhaustsAComboDeck() async throws {
+		let combo = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				Models.List.films
+
+				combo
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
+			}
+		}
+		var state = ComboDetail.State(combo: combo)
+		#expect(state.isExhausted)
+
+		// A new Item arrives undealt, because a draw row is keyed on the Item's identity and
+		// nothing else touches it — the same rule that un-exhausts a List Deck, one surface over.
+		try await seed { db in
+			try db.seed {
+				Item(id: UUID(-2), createdAt: .later, listID: UUID(-1), title: "Sushi")
+			}
+		}
+		try await state.$members.load()
+		#expect(state.randomiseCaption == .deck(remaining: 1, total: 2))
+		#expect(state.isExhausted == false)
+
+		// And so does a whole member List, which is the case a List Deck has no equivalent of:
+		// the pool grew by a List's worth of Items this Combo has never dealt.
+		try await seed { db in
+			try db.seed {
+				Item(id: UUID(-3), createdAt: .later, listID: UUID(-2), title: "Heat")
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .later, listID: UUID(-2))
+			}
+		}
+		try await state.$members.load()
+		#expect(state.randomiseCaption == .deck(remaining: 2, total: 3))
+		#expect(state.isExhausted == false)
+	}
+
+	@Test
+	internal func untickingAListTakesThisCombosDrawsOfItsItemsAndNoOthers() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+
+				Models.List.films
+				Item(id: UUID(-2), createdAt: .seed, listID: UUID(-2), title: "Heat")
+
+				// Friday night pools both and has dealt both.
+				Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
+				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
+				ComboDraw(id: UUID(-2), comboID: UUID(-1), createdAt: .later, itemID: UUID(-2))
+
+				// Weeknights pools Films too, and has dealt the very same Item.
+				Combo(id: UUID(-2), createdAt: .later, drawMode: .deck, name: "Weeknights")
+				ComboList(id: UUID(-3), comboID: UUID(-2), createdAt: .seed, listID: UUID(-2))
+				ComboDraw(id: UUID(-3), comboID: UUID(-2), createdAt: .seed, itemID: UUID(-2))
+
+				// And Films is a Deck in its own right, part-way through its own run.
+				ListDraw(itemID: UUID(-2), createdAt: .seed)
+			}
+		}
+		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(store.summaries.first)
+
+		store.send(.editSwiped(summary)) {
+			$0.destination = .editor(
+				.editing(
+					Combo.Draft(summary.combo),
+					options: [
+						ListOption(itemCount: 1, list: .lunch),
+						ListOption(itemCount: 1, list: .films),
+					],
+					ticked: [
+						.lunchOf(UUID(-1), createdAt: .seed),
+						ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2)),
+					],
+				)
+			)
+		}
+
+		let options = try #require(store.destination?.editor?.options)
+		store.send(.destination(.editor(.listToggled(options[1])))) {
+			$0.destination.modify(\.editor) { $0.unticked = [UUID(-2)] }
+		}
+		await store.send(.destination(.editor(.saveButtonTapped)))?.value
+
+		// Friday night's memory of Heat goes with the membership: those cards are not in its
+		// deck any more, so neither is the record of dealing them (ADR-0023). Its draw of Pizza
+		// stays, because Lunch is still a member.
+		let rows = try await draws()
+		#expect(rows.filter { $0.comboID == UUID(-1) }.map(\.itemID) == [UUID(-1)])
+
+		// **And not one row more.** Weeknights still holds Heat and keeps its own draw of it —
+		// the delete is scoped by Combo as well as by Item, or unticking here would empty every
+		// other Combo's memory of the same Items. Films' own `ListDraw` row is untouched too:
+		// the form reaches no `ListDraw` row at all (ADR-0007).
+		#expect(rows.filter { $0.comboID == UUID(-2) }.map(\.itemID) == [UUID(-2)])
+		#expect(try await listDraws().map(\.itemID) == [UUID(-2)])
+
+		let friday = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		let weeknights = Combo(id: UUID(-2), createdAt: .later, drawMode: .deck, name: "Weeknights")
+		try await reloadIndex(store)
+		store.expect {
+			$0.destination = nil
+			// `Deck · 0 of 1 left` for Friday night: it is down to Lunch, and its one card is
+			// dealt. The deleted rows leave no trace in the arithmetic — the point of deleting
+			// them rather than filtering them out forever.
+			$0.summaries = [
+				ComboSummary(combo: friday, dealtCount: 1, itemCount: 1, listCount: 1),
+				ComboSummary(combo: weeknights, dealtCount: 1, itemCount: 1, listCount: 1),
+			]
+		}
+
+		// So re-adding Films gives this Combo a clean card rather than one that arrives dealt,
+		// which is the failure leaving the row behind would have produced — a deck that shrank
+		// for a reason nothing on screen ever showed. Not a gesture this test drives through the
+		// form: what is under test is the row, and the form's insert is `anUntouchedMembership…`'s
+		// claim.
+		try await database.write { db in
+			try db.seed {
+				ComboList(id: UUID(-4), comboID: UUID(-1), createdAt: .later, listID: UUID(-2))
+			}
+		}
+		// Read rather than `expect`ed: nothing was sent, so there is no action whose changes
+		// this could be — the third note on the suite says why that makes `expect` the wrong
+		// tool here.
+		//
+		// `Deck · 1 of 2 left`, not `0 of 2`: Heat is back in the pool and back in the deck.
+		try await reloadIndex(store)
+		#expect(
+			store.summaries == [
+				ComboSummary(combo: friday, dealtCount: 1, itemCount: 2, listCount: 2),
+				ComboSummary(combo: weeknights, dealtCount: 1, itemCount: 1, listCount: 1),
+			]
+		)
+		#expect(RandomiseFeature.State(scope: .combo(friday)).pool.map(\.title) == ["Heat"])
+	}
+
+	@Test
+	internal func aComboWithNothingToDealIsPromptingRatherThanExhausted() async throws {
+		try await seed { db in
+			try db.seed {
+				Models.List.lunch
+				Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
+			}
+		}
+		let combo = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+		let state = ComboDetail.State(combo: combo)
+
+		// A Combo Deck pooling nothing has dealt everything it holds and is *not* exhausted: its
+		// Randomise is disabled with a prompt to add Items, rather than offering to put back
+		// cards that were never dealt. Both prompts come before the Deck caption for that reason.
+		#expect(state.randomiseCaption == .noItems)
+		#expect(state.canRandomise == false)
+		#expect(state.isExhausted == false)
+	}
+}
+
 // MARK: - Reading and seeding
 
 extension CombineFeatureTests {
 	/// The in-memory database the suite trait handed this test case.
 	private var database: any DatabaseWriter {
 		Dependency(\.defaultDatabase).wrappedValue
+	}
+
+	/// Reloads a Combo detail's own draw rows. See ``reloadIndex(_:)`` for why a test has to
+	/// ask.
+	private func reloadDraws(_ store: TestStore<ComboDetail>) async throws {
+		try await store.state.$draws.load()
 	}
 
 	/// Runs the index's queries again and hands the results to the store's reads.
@@ -1070,6 +1553,18 @@ extension CombineFeatureTests {
 		try await store.state.$summaries.load()
 	}
 
+	/// Waits for a deal the randomise sheet started, then hands the pool the world it left
+	/// behind.
+	///
+	/// A draw's row is written from a task, so a test that read the pool straight afterwards
+	/// would be racing it. The empty write queues behind that insert on the same serialised
+	/// writer, which is what makes the wait a fact rather than a sleep; the load is the one
+	/// ``reloadIndex(_:)`` explains.
+	private func settle(_ store: TestStore<RandomiseFeature>) async throws {
+		try await database.write { _ in }
+		try await store.state.$pool.load()
+	}
+
 	private func seed(_ write: @escaping @Sendable (Database) throws -> Void) async throws {
 		try await database.write(write)
 	}
@@ -1080,8 +1575,12 @@ extension CombineFeatureTests {
 		}
 	}
 
+	/// Every `ComboDraw` row in the database, whichever Combo authored it — the table a member
+	/// List's own draw must leave exactly as it found it (ADR-0007).
 	private func draws() async throws -> [ComboDraw] {
-		try await database.read { db in try ComboDraw.all.fetchAll(db) }
+		try await database.read { db in
+			try ComboDraw.all.order { ($0.createdAt, $0.itemID) }.fetchAll(db)
+		}
 	}
 
 	/// Every member List's *own* draw rows, whichever List's Item they belong to — the table a
@@ -1103,6 +1602,18 @@ extension CombineFeatureTests {
 	private func memberships() async throws -> [ComboList] {
 		try await database.read { db in
 			try ComboList.all.order { ($0.createdAt, $0.id) }.fetchAll(db)
+		}
+	}
+
+	/// The one Combo these worlds build, pooled and in the sheet's own order — so a test can
+	/// say "the multiset that came out is the pool" without restating what the pool is.
+	///
+	/// Read back rather than written down. Items seeded in the same instant are separated by
+	/// the id tie-break, and whether `UUID(-1)` collates before `UUID(-2)` is SQLite's business
+	/// rather than something a test should assert by assuming it.
+	private func pooledItems() async throws -> [Item] {
+		try await database.read { db in
+			try Item.inCombo(UUID(-1)).order { ($0.createdAt, $0.id) }.fetchAll(db)
 		}
 	}
 }

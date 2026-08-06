@@ -205,6 +205,12 @@ public struct ComboEditor {
 /// ADR puts it — in the pool, when it is built. Collapsing them here would mean a save
 /// issuing a hard, global delete of a row another device authored.
 ///
+/// **Unticking a List takes this Combo's draws of its Items with it** (ADR-0023). That is the
+/// one place the form touches deck state, and it is a hard, global delete like every other
+/// write here: untick Films, save, and this Combo's memory of the Films Items it dealt is gone
+/// on every device. A ticked List's draws are not restored, because there are none to restore
+/// — this is the same delete seen a moment earlier.
+///
 /// A free function rather than a method on ``ComboEditor``, so the database write captures
 /// the values it needs and not the feature.
 private func writeCombo(
@@ -228,6 +234,13 @@ private func writeCombo(
 			.and(ComboList.where { $0.listID.in(removing) })
 			.delete()
 			.execute(db)
+		// And this Combo's memory of the Items that just left with them. A draw row survives
+		// almost everything — a rename, a switch to plain and back — but not the Item leaving
+		// the pool it was dealt from: those cards are not in the deck any more, so neither is
+		// the record of dealing them (ADR-0023). Only this Combo's, and only these Lists'
+		// Items: every other Combo holding them is untouched, and no `ListDraw` row is reached
+		// from here at all (ADR-0007).
+		try ComboDraw.inCombo(comboID, ofLists: removing).delete().execute(db)
 	}
 
 	// A List ticked here that another device had already added needs no second row: the tick

@@ -11,8 +11,9 @@ internal import ListDetailFeature
 internal import Models
 internal import RandomiseFeature
 
-/// One Combo's member Lists: inline title, `Edit` in the toolbar, tap a member to push the
-/// real List detail, and the pinned Randomise that draws from the pool.
+/// One Combo's member Lists: inline title, `Edit` in the toolbar — beside **Reshuffle** when
+/// the Combo is a Deck — tap a member to push the real List detail, and the pinned Randomise
+/// that draws from the pool.
 public struct ComboDetailView: View {
 	@Bindable private var store: StoreOf<ComboDetail>
 
@@ -26,8 +27,29 @@ public struct ComboDetailView: View {
 			.navigationTitle(Text(verbatim: store.combo.name))
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
-				// The only toolbar item. There is no `+` here and no swipe-to-remove on the rows:
-				// membership has exactly one home, and it is the form this opens (ADR-0020).
+				// A Deck only, and the one place this Combo's Deck is reachable mid-run: the pinned
+				// button does not become Reshuffle until the Deck is spent, and the sheet offers it
+				// only once a re-roll has landed on exhaustion. Without it "Reshuffle is available
+				// at any time" would hold in the domain and be unreachable on this tab — the
+				// argument the Lists tab's own toolbar item is there to answer, which is why #24's
+				// "`Edit` is the only toolbar item" does not survive a Combo that can be a Deck.
+				//
+				// A member List's Reshuffle is not a substitute and could never be: it puts back
+				// that List's own cards and leaves this Combo's exactly where they are (ADR-0007).
+				//
+				// Dimmed while there is nothing pooled to put back, which is the caption's
+				// `Deck · N of N left` said as a button state.
+				if store.isDeck {
+					Button {
+						store.send(.reshuffleButtonTapped)
+					} label: {
+						Label { Text("Reshuffle", bundle: #bundle) } icon: { Image(systemName: "shuffle") }
+					}
+					.disabled(store.draws.isEmpty)
+				}
+
+				// There is no `+` here and no swipe-to-remove on the rows: membership has exactly
+				// one home, and it is the form this opens (ADR-0020).
 				Button {
 					store.send(.editButtonTapped)
 				} label: {
@@ -38,16 +60,17 @@ public struct ComboDetailView: View {
 			// have just made the Combo — and its Randomise is visible but disabled, with a prompt
 			// to add one rather than a button that has quietly gone away.
 			//
-			// `isExhausted` is `false` throughout: a Combo's own deck state is #25, so nothing
-			// here can be spent and the bar never becomes **Reshuffle**. `reshuffle` is the
-			// closure that word would call, and until then nothing calls it.
+			// One button, and the two things it can be, exactly as the Lists tab does it: a spent
+			// Combo Deck reads **Reshuffle** and puts its own cards back, rather than opening a
+			// sheet with nothing to show. Which of the two it is, is the bar's to decide — it is
+			// handed both and picks with the same flag it picks the word with.
 			.randomiseBar(
-				caption: caption,
-				spokenCaption: caption,
+				caption: captions.read,
+				spokenCaption: captions.spoken,
 				isEnabled: store.canRandomise,
-				isExhausted: false,
+				isExhausted: store.isExhausted,
 				randomise: { store.send(.randomiseButtonTapped) },
-				reshuffle: {},
+				reshuffle: { store.send(.reshuffleButtonTapped) },
 			)
 			// The third level of optional child state, and the same `.navigationDestination(item:)`
 			// the Lists tab pushes its detail with — no `[Path.State]` stack is introduced
@@ -67,29 +90,42 @@ public struct ComboDetailView: View {
 			)
 	}
 
-	/// What sits under the button — the pool, or which of the two things is missing.
+	/// What sits under the button — the pool, a Deck running down, or which of the two things is
+	/// missing — and what VoiceOver reads in its place, so the bar says
+	/// `Randomise, Deck, 10 of 13 left, button`.
 	///
-	/// One `Text` serving both the read and the spoken caption, unlike the Lists tab's Deck
-	/// variant: none of these three carries a separator, and `·` against a comma is the only
-	/// thing that ever makes a caption two authored strings instead of one (ADR-0022).
+	/// The Deck variant is authored twice because its separator differs: `·` is read and a comma
+	/// is spoken (ADR-0022). The other three carry no separator to differ over, so each is one
+	/// entry said once.
 	///
-	/// Which of the three it is was decided in `State`, so this renders and chooses nothing —
+	/// Which of the four it is was decided in `State`, so this renders and chooses nothing —
 	/// the choice is a property a test can assert rather than a branch only a running screen
 	/// could check.
-	private var caption: Text {
+	private var captions: (read: Text, spoken: Text) {
 		switch store.randomiseCaption {
+		case let .deck(remaining, total):
+			// The Combine index row's Deck caption without its `N Lists`, which the row needs to
+			// name the Combo it is one of and this screen's title has already said.
+			return (
+				Text("Deck · \(remaining) of \(total) left", bundle: #bundle),
+				Text("Deck, \(remaining) of \(total) left", bundle: #bundle)
+			)
+
 		case .noItems:
-			Text("The Lists in this Combo have no items", bundle: #bundle)
+			let prompt = Text("The Lists in this Combo have no items", bundle: #bundle)
+			return (prompt, prompt)
 
 		case .noLists:
-			Text("Add a List to randomise", bundle: #bundle)
+			let prompt = Text("Add a List to randomise", bundle: #bundle)
+			return (prompt, prompt)
 
 		case .pool(let count):
 			// Inflected, because plain interpolation renders "1 items" on screen for everyone
 			// (ADR-0018). The Lists tab's enabled caption word for word: opening a Combo should
 			// tell you nothing different about its pool from the way a List tells you about its
 			// Items.
-			Text("^[\(count) items](inflect: true)", bundle: #bundle)
+			let pool = Text("^[\(count) items](inflect: true)", bundle: #bundle)
+			return (pool, pool)
 		}
 	}
 }

@@ -8,10 +8,12 @@ public import ListDetailFeature
 public import Models
 public import RandomiseFeature
 
+internal import Dependencies
+internal import IssueReporting
 internal import SQLiteData
 
-/// What the pinned bar's caption says beneath the button — three sentences where the Lists
-/// tab has two (#24).
+/// What the pinned bar's caption says beneath the button — four sentences where the Lists tab
+/// has three, because a Combo has two ways of being empty (#24, #25).
 ///
 /// **The choice lives in state rather than in the view**, for the reason ``PoolFooter`` does:
 /// the thing that picks between the sentences is then the thing a test can assert, and the
@@ -21,18 +23,27 @@ internal import SQLiteData
 /// ``ComboDetail/State/canRandomise`` — so a caption explaining why the button is dimmed can
 /// never be shown beside a button that is not.
 public enum RandomiseCaption: Hashable, Sendable {
+	/// `Deck · 10 of 13 left` — a Combo Deck's pool, running down.
+	///
+	/// The Combine index row's Deck caption word for word, minus the `N Lists` the row carries
+	/// and this screen's title does not: opening a Combo tells you nothing different about its
+	/// Deck from the row you opened it from. `0 of 13 left` is the exhausted state, where the
+	/// button beside it reads **Reshuffle**.
+	case deck(remaining: Int, total: Int)
+
 	/// `The Lists in this Combo have no items` — members, but nothing in any of them.
 	case noItems
 
 	/// `Add a List to randomise` — the Combo holds no Lists at all.
 	case noLists
 
-	/// `12 items` — the pool, and the only state in which the button is live.
+	/// `12 items` — a plain Combo's pool.
 	case pool(count: Int)
 }
 
 /// `ComboDetail` — one Combo's member Lists, the `Edit` that reopens the one form, and the
-/// pinned Randomise that draws from the pooled Items of all of them (#24).
+/// pinned Randomise that draws from the pooled Items of all of them (#24), running down a
+/// Deck of its own as it goes (#25).
 ///
 /// **A member row pushes the real ``ListDetail``** — the same screen the Lists tab pushes,
 /// with its own pinned Randomise, its own editor sheets and its own `ListDraw` deck. Nothing
@@ -74,6 +85,18 @@ public struct ComboDetail {
 		/// ``Destination``, because a push and a sheet are not mutually exclusive.
 		public var detail: ListDetail.State?
 
+		/// What this **Combo** has dealt — its own `ComboDraw` rows, never a member List's
+		/// `ListDraw` rows (ADR-0007).
+		///
+		/// Empty for a plain Combo, which writes none — and *not* empty for a Deck switched back
+		/// to plain, whose rows are preserved so that switching back resumes where it left off,
+		/// exactly as `ListDetail` keeps a List's.
+		///
+		/// Scoped to draws of Items **still in the pool**, which is the condition
+		/// `ComboSummary.index` joins on: a List dropped from the Combo takes its draws out of
+		/// the arithmetic with it rather than leaving the caption reading `-2 of 5 left`.
+		@FetchAll internal var draws: [ComboDraw]
+
 		/// The member Lists and their Item counts — live, so a List renamed or filled on another
 		/// device changes underneath the screen, and deduplicated by `listID`.
 		@FetchAll internal var members: [ListOption]
@@ -83,9 +106,35 @@ public struct ComboDetail {
 		/// Whether the pinned button does anything, read off the caption rather than computed
 		/// beside it: the caption is the only thing that says *why* a dimmed button is dimmed
 		/// (ADR-0018), and deriving one from the other is what stops them ever disagreeing.
+		///
+		/// An exhausted Deck is **not** dimmed — the button reads **Reshuffle** there, and a
+		/// disabled Reshuffle would be the only way out of a spent Combo Deck taken away.
 		public var canRandomise: Bool {
-			guard case .pool = randomiseCaption else { return false }
-			return true
+			switch randomiseCaption {
+			case .deck, .pool: true
+			case .noItems, .noLists: false
+			}
+		}
+
+		/// How many pooled Items this Combo has dealt.
+		///
+		/// Distinct by `itemID`, as `ComboSummary` counts them: `comboDraws` has no `UNIQUE`
+		/// outside its primary key, so two devices dealing the same card offline leave two rows
+		/// for it, and counting both would read the Deck down below zero (ADR-0008).
+		internal var dealtCount: Int {
+			Set(draws.map(\.itemID)).count
+		}
+
+		public var isDeck: Bool { combo.drawMode == .deck }
+
+		/// A Combo Deck that has dealt every pooled Item it has. The pinned button reads
+		/// **Reshuffle** here.
+		///
+		/// A Combo with nothing in it is not exhausted — it has dealt nothing because it pools
+		/// nothing, and its Randomise is disabled with a prompt to add a List or some Items
+		/// rather than an invitation to put back cards that were never dealt.
+		public var isExhausted: Bool {
+			isDeck && itemCount > 0 && remainingCount == 0
 		}
 
 		/// The Combo's pool size: every Item of every member List, summed.
@@ -99,20 +148,33 @@ public struct ComboDetail {
 			members.reduce(0) { $0 + $1.itemCount }
 		}
 
-		/// Which of the three sentences sits under the button. See ``RandomiseCaption``.
+		/// Which sentence sits under the button. See ``RandomiseCaption``.
 		///
 		/// The two prompts are distinct because they ask for different things: a Combo with no
 		/// Lists needs one adding here, and a Combo whose Lists are all empty needs Items adding
 		/// somewhere else entirely. One prompt covering both would name neither.
+		///
+		/// Both prompts come before the Deck variant, exactly as `ListDetail`'s empty-List
+		/// prompt does: a Deck with nothing to deal needs something adding, not putting back.
 		public var randomiseCaption: RandomiseCaption {
 			if members.isEmpty { return .noLists }
-			return itemCount == 0 ? .noItems : .pool(count: itemCount)
+			if itemCount == 0 { return .noItems }
+			return isDeck
+				? .deck(remaining: remainingCount, total: itemCount)
+				: .pool(count: itemCount)
 		}
+
+		/// How many pooled Items the Deck has left to deal. Meaningless for a plain Combo, which
+		/// has no memory of what it has drawn.
+		public var remainingCount: Int { itemCount - dealtCount }
 
 		public init(combo: Combo) {
 			// Seeded with the row the index already read, so the screen renders its title on the
 			// first frame rather than after a query has answered.
 			_combo = FetchOne(wrappedValue: combo, Combo.find(combo.id))
+			// Ordered like everything else, so that a reload cannot reshuffle the rows underneath
+			// an exhaustive assertion. Nothing on screen reads a draw's own order.
+			_draws = FetchAll(ComboDraw.pooled(in: combo.id).order { ($0.createdAt, $0.itemID) })
 			// Built here rather than declared on the property the way the index's are, for the
 			// reason `ListDetail`'s items are: the query is scoped to one Combo, and the id only
 			// exists once there is a Combo to read it from.
@@ -126,6 +188,7 @@ public struct ComboDetail {
 		case editButtonTapped
 		case memberTapped(ListOption)
 		case randomiseButtonTapped
+		case reshuffleButtonTapped
 	}
 
 	public init() {}
@@ -153,10 +216,29 @@ public struct ComboDetail {
 				state.detail = ListDetail.State(list: member.list)
 
 			case .randomiseButtonTapped:
-				// The scope is all the sheet is handed: it owns the pooled query, the pick and —
-				// once #25 lands — the deal (ADR-0016). Mounted within this `send`, so the opening
-				// result is drawn before SwiftUI presents anything.
+				// The scope is all the sheet is handed: it owns the pooled query, the pick and the
+				// deal (ADR-0016). Mounted within this `send`, so the opening result is drawn
+				// before SwiftUI presents anything.
 				state.destination = .randomise(RandomiseFeature.State(scope: .combo(state.combo)))
+
+			case .reshuffleButtonTapped:
+				// Puts every Item this Combo has dealt back, whether the Deck is spent or barely
+				// touched — a hard delete of the whole set, which is what makes it the exact
+				// inverse of the rows the draws wrote (ADR-0006). Every member List's own
+				// `ListDraw` rows are left exactly where they are: this Combo is putting back its
+				// own cards and nobody else's (ADR-0007).
+				//
+				// Sent by the toolbar item and by the pinned bar's spent Deck alike, which is why
+				// this is not gated on exhaustion.
+				@Dependency(\.defaultDatabase) var database
+				let comboID = state.combo.id
+				store.addTask {
+					await withErrorReporting {
+						try await database.write { db in
+							try ComboDraw.inCombo(comboID).delete().execute(db)
+						}
+					}
+				}
 			}
 		}
 		.ifLet(\.destination, action: \.destination) { Destination.body }

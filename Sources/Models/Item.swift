@@ -89,6 +89,25 @@ extension Item {
 	public static func undealt(in listID: List.ID) -> Where<Item> {
 		inList(listID) + Self.where { $0.id.notIn(ListDraw.all.select { $0.itemID }) }
 	}
+
+	/// The pooled Items of one Combo that have no ``ComboDraw`` row *for that Combo* —
+	/// everything a Combo Deck has left to deal.
+	///
+	/// The same mechanism as ``undealt(in:)``, in a second table: the row's existence is the
+	/// draw, the pool shrinks by one on every deal, and the Deck is **exhausted** when nothing
+	/// answers this (ADR-0006).
+	///
+	/// **The subquery is scoped, and has to be**, which is the one thing that differs. An
+	/// Item belongs to exactly one List, so a `ListDraw` row can only ever name an Item its
+	/// List's `WHERE` has already let through; an Item belongs to any number of Combos, so an
+	/// unscoped subquery here would let one Combo's deal empty another's deck.
+	///
+	/// Member Lists' own `drawMode` and `ListDraw` rows are not consulted, exactly as in
+	/// ``inCombo(_:)``: an Item already dealt within its own List is still in this pool
+	/// (ADR-0007).
+	public static func undealt(inCombo comboID: Combo.ID) -> Where<Item> {
+		inCombo(comboID) + Self.where { $0.id.notIn(ComboDraw.inCombo(comboID).select { $0.itemID }) }
+	}
 }
 
 /// The macro generates `Draft` without carrying the conformances declared above, and every
