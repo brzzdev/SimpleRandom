@@ -6,16 +6,16 @@
 public import ComposableArchitecture2
 public import SwiftUI
 
+internal import Acknowledgements
 internal import Models
 internal import SwiftUINavigation
 internal import UIKit
 
 /// The Settings tab: sections of stock rows, destructive last.
 ///
-/// Three of the six specified rows are not here yet — `Sync` (#29) and `View Logs` (#28) do
-/// not exist at all, and `Acknowledgements` is present but disabled until #27 gives it
-/// somewhere to push. **There is no `#if DEBUG` section**, and there is not to be one:
-/// release and debug builds show the same tab.
+/// Two of the six specified rows are not here yet — `Sync` (#29) and `View Logs` (#28) do not
+/// exist at all. **There is no `#if DEBUG` section**, and there is not to be one: release and
+/// debug builds show the same tab.
 public struct SettingsView: View {
 	@Bindable private var store: StoreOf<SettingsFeature>
 
@@ -31,6 +31,12 @@ public struct SettingsView: View {
 				deleteAllLists
 			}
 			.navigationTitle(Text("Settings", bundle: #bundle))
+			// The tab's one push, and the same `.navigationDestination(item:)` the other two
+			// tabs push their details with — no `[Path.State]` stack is introduced (ADR-0013).
+			.navigationDestination(
+				item: $store.scope(\.acknowledgements, action: \.acknowledgements),
+				destination: AcknowledgementsView.init,
+			)
 		}
 	}
 
@@ -78,15 +84,31 @@ public struct SettingsView: View {
 			// which would make a row you can copy look like a row that does something.
 			.buttonStyle(.plain)
 
-			// Disabled until #27, which builds both screens behind it. The row is here so the
-			// section is the shape it ships as; what it is missing is a destination, and a
-			// dimmed row says that where a link to a blank screen would not.
-			NavigationLink {
-				EmptyView()
+			// A `Button` rather than a `NavigationLink`, because the push is driven by state the
+			// feature owns rather than by the link's own destination (ADR-0013).
+			//
+			// That costs the two things a `NavigationLink` draws for free, and both are put back
+			// by hand: `.plain` so the row is not rendered in the accent colour, which would make
+			// a row that pushes look like a row that acts — the same reason the `Version` row
+			// above sets it — and a chevron, because a `Form` row that pushes has one everywhere
+			// else in iOS and its absence is what tells you a row is inert.
+			//
+			// Hidden from VoiceOver: the row is already announced as a button, and "chevron
+			// forward" after the name says nothing.
+			Button {
+				store.send(.acknowledgementsButtonTapped)
 			} label: {
-				Text("Acknowledgements", bundle: #bundle)
+				HStack {
+					Text("Acknowledgements", bundle: #bundle)
+					Spacer()
+					Image(systemName: "chevron.forward")
+						.font(.footnote.weight(.semibold))
+						.foregroundStyle(.tertiary)
+						.accessibilityHidden(true)
+				}
+				.contentShape(.rect)
 			}
-			.disabled(true)
+			.buttonStyle(.plain)
 		} header: {
 			Text("About", bundle: #bundle)
 		}

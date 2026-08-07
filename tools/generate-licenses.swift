@@ -1,0 +1,239 @@
+//
+// Copyright © 2026 brzzdev
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+
+import Foundation
+
+// Regenerates `Sources/Acknowledgements/Licenses.generated.swift` from `Package.resolved` and
+// the checkouts SwiftPM has already made under `.build/checkouts`. Run it with `just licenses`;
+// the app never runs it, and the output is committed.
+//
+// **The whole transitive graph is credited, test-only dependencies included.** `Package.resolved`
+// is the list of everything this repo pins, and a licence that only applies to code shipped in
+// the binary is a distinction this screen cannot make and nobody reading it wants.
+//
+// **It fails rather than guesses.** A package with no discoverable licence file, or with one this
+// script cannot classify, stops the run and names itself. Shipping a package as `Unknown` — or
+// worse, quietly dropping it — is the failure this screen exists to prevent, and it would be
+// invisible in a diff of an already-long generated file.
+
+// MARK: - Package.resolved
+
+/// One pin, as `Package.resolved` version 3 writes it.
+struct Pin: Decodable {
+	struct State: Decodable {
+		let version: String?
+	}
+
+	let location: String
+	let state: State
+}
+
+struct Resolved: Decodable {
+	let pins: [Pin]
+}
+
+// MARK: - Licence discovery
+
+/// The packages that ship no licence file at all, and what to credit them with instead.
+///
+/// This exists for TCA26 and is deliberately not a fallback: an entry here is a human reading a
+/// repository and writing down what it says, and anything not listed stops the run.
+///
+/// TCA26's README ends `© 2026 Point-Free, Inc. All rights reserved.` and the repository carries
+/// no `LICENSE`. That is the honest thing to display — it is an unreleased branch pinned for its
+/// `StoreActor` (ADR-0001), not open-source code with terms that were mislaid.
+let statedTerms: [String: (type: String, text: String)] = [
+	"TCA26": (
+		type: "All rights reserved",
+		text: """
+			© 2026 Point-Free, Inc. All rights reserved.
+
+			The Composable Architecture 2 is distributed as an untagged branch and carries no \
+			licence file. This is the copyright notice its README states.
+			"""
+	),
+]
+
+/// Reads as SPDX where there is an identifier to read as, because that is the name people
+/// searching for a package's terms already know.
+///
+/// Matched on the text rather than on the file name: the file is called `LICENSE`, `LICENCE` or
+/// `LICENSE.txt` depending on the author, and none of those spellings says what is in it.
+func licenceType(of text: String) -> String? {
+	if text.contains("Apache License"), text.contains("Version 2.0") {
+		// Both Apache-licensed pins here are Swift-project repositories, which append the
+		// exception rather than shipping stock Apache-2.0. Naming it matters: the exception is
+		// the clause that makes linking the runtime into a closed binary unremarkable.
+		text.range(of: "Runtime Library Exception", options: .caseInsensitive) != nil
+			? "Apache-2.0 with Runtime Library Exception"
+			: "Apache-2.0"
+	} else if text.contains("MIT License") || text.contains("Permission is hereby granted, free of charge") {
+		// GRDB.swift's licence opens on its copyright line rather than on a title, so the grant
+		// sentence is what identifies it. It is the exact wording of the MIT grant.
+		"MIT"
+	} else {
+		nil
+	}
+}
+
+/// The licence file in a checkout, whichever of the six spellings the author used.
+///
+/// Top level only. A `LICENSE` nested in a vendored subdirectory belongs to something this
+/// package embeds, not to the package, and picking one up by a recursive search would credit the
+/// wrong terms.
+///
+/// `min()` rather than the directory's own order, which is whatever the file system hands back —
+/// a package carrying both `LICENSE` and `LICENSE.txt` should generate the same file on every
+/// machine.
+func licenceFile(in checkout: URL) -> URL? {
+	guard let names = try? FileManager.default.contentsOfDirectory(atPath: checkout.path) else { return nil }
+	return
+		names
+		.filter { $0.range(of: #"^(licen[cs]e|copying)(\..+)?$"#, options: [.regularExpression, .caseInsensitive]) != nil }
+		.min()
+		.map(checkout.appendingPathComponent)
+}
+
+// MARK: - Emitting
+
+/// One licence, as the generated file writes it.
+struct Entry {
+	let name: String
+	let text: String
+	let type: String
+	let version: String?
+}
+
+/// Renders a licence body as an indented raw multi-line literal.
+///
+/// Raw (`#"""`) so that backslashes and quotes in the text — Apache-2.0 has both — need no
+/// escaping, and multi-line so the generated file diffs a line at a time rather than as one
+/// unreadable string per package.
+///
+/// Every line carrying text is prefixed with the closing delimiter's indentation, because Swift
+/// strips exactly that much from each line and a line carrying less is a compile error rather
+/// than a formatting quirk. **Blank lines are left genuinely empty**, which the rule exempts:
+/// indenting them would commit a file full of trailing whitespace, and anything that later
+/// trimmed it would silently stop the file compiling.
+func literal(_ text: String, indent: String) -> String {
+	let body =
+		text
+		.replacingOccurrences(of: "\r\n", with: "\n")
+		.trimmingCharacters(in: .whitespacesAndNewlines)
+		.split(separator: "\n", omittingEmptySubsequences: false)
+		.map { $0.allSatisfy(\.isWhitespace) ? "" : indent + $0 }
+		.joined(separator: "\n")
+	return "#\"\"\"\n\(body)\n\(indent)\"\"\"#"
+}
+
+// MARK: - Run
+
+let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+let checkouts = root.appendingPathComponent(".build/checkouts")
+
+guard FileManager.default.fileExists(atPath: checkouts.path) else {
+	// SwiftPM makes these; Xcode builds this package through Tuist and never populates `.build`,
+	// so on a fresh clone the checkouts are genuinely absent rather than stale.
+	FileHandle.standardError.write(
+		Data("error: \(checkouts.path) is missing — run `swift package resolve` first.\n".utf8)
+	)
+	exit(1)
+}
+
+let resolved = try JSONDecoder().decode(
+	Resolved.self,
+	from: Data(contentsOf: root.appendingPathComponent("Package.resolved"))
+)
+
+var entries: [Entry] = []
+var failures: [String] = []
+
+for pin in resolved.pins {
+	// SwiftPM names a checkout directory after the repository, which is also the name the package
+	// is known by. `identity` is lower-cased, so it would render `grdb.swift` and `tca26`.
+	//
+	// Only a trailing `.git` comes off. `deletingPathExtension()` would take `.swift` off
+	// `GRDB.swift` and go looking for a checkout that does not exist.
+	let name = URL(fileURLWithPath: pin.location).lastPathComponent
+		.replacingOccurrences(of: #"\.git$"#, with: "", options: .regularExpression)
+	let checkout = checkouts.appendingPathComponent(name)
+
+	guard let file = licenceFile(in: checkout) else {
+		if let stated = statedTerms[name] {
+			entries.append(Entry(name: name, text: stated.text, type: stated.type, version: pin.state.version))
+		} else {
+			failures.append("\(name): no licence file in \(checkout.path), and no stated terms for it in this script")
+		}
+		continue
+	}
+
+	let text = try String(contentsOf: file, encoding: .utf8)
+	guard let type = licenceType(of: text) else {
+		failures.append("\(name): \(file.lastPathComponent) matches no licence this script knows")
+		continue
+	}
+	// The one sequence that would close the raw literal early. No licence contains it, and if one
+	// ever does the fix is another `#` on the delimiters — which is a decision, not something to
+	// discover from a compile error in a nine-hundred-line generated file.
+	guard !text.contains("\"\"\"#") else {
+		failures.append("\(name): \(file.lastPathComponent) contains the raw string delimiter `\"\"\"#`")
+		continue
+	}
+
+	entries.append(Entry(name: name, text: text, type: type, version: pin.state.version))
+}
+
+guard failures.isEmpty else {
+	FileHandle.standardError.write(Data(("error: \(failures.joined(separator: "\nerror: "))\n").utf8))
+	exit(1)
+}
+
+// Case-insensitively, so `GRDB.swift` sorts among the `swift-` packages rather than ahead of all
+// of them — the order someone scanning the screen for a name expects.
+entries.sort { $0.name.lowercased() < $1.name.lowercased() }
+
+// Indented absolutely rather than by the literal's own stripping, because interpolating a
+// multi-line string into a multi-line literal inserts it verbatim — only the literal's own lines
+// are re-indented, so every line but the first would come out flush left.
+let rendered = entries.map { entry in
+	let version = entry.version.map { "\"\($0)\"" } ?? "nil"
+	return """
+		\t\tLicense(
+		\t\t\tname: "\(entry.name)",
+		\t\t\ttext: \(literal(entry.text, indent: "\t\t\t")),
+		\t\t\ttype: "\(entry.type)",
+		\t\t\tversion: \(version),
+		\t\t),
+		"""
+}
+
+let output = """
+	//
+	// Copyright © 2026 brzzdev
+	// SPDX-License-Identifier: AGPL-3.0-or-later
+	//
+	// Generated by `just licenses` from `Package.resolved`. Do not edit by hand.
+	//
+
+	/// Every package this app pins, and the terms it is used under.
+	internal enum Licenses {
+		internal static let all: [License] = [
+	\(rendered.joined(separator: "\n"))
+		]
+	}
+
+	"""
+
+try output.write(
+	to: root.appendingPathComponent("Sources/Acknowledgements/Licenses.generated.swift"),
+	atomically: true,
+	encoding: .utf8
+)
+
+// `disable_print` guards app code, where standard out is nowhere. This is a command-line script
+// whose whole user interface is standard out, and its counterpart failure path above already
+// writes to standard error.
+// swiftlint:disable:next disable_print
+print("Wrote \(entries.count) licences.")

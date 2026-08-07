@@ -1,7 +1,53 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-
+    "%@ · %@" : {
+      "comment" : "A licence row's caption: the package's version, then its licence type.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@"
+          }
+        }
+      }
+    },
+    "%@, %@ licence" : {
+      "comment" : "VoiceOver label for a licence row whose package has no version: the package's name, then its licence type.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, %@ licence"
+          }
+        }
+      }
+    },
+    "%@, version %@, %@ licence" : {
+      "comment" : "VoiceOver label for a licence row: the package's name, its version, then its licence type.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, version %@, %@ licence"
+          }
+        }
+      }
+    },
+    "Acknowledgements" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Acknowledgements"
+          }
+        }
+      }
+    }
   },
   "version" : "1.0"
 }

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 
+public import Acknowledgements
 public import ComposableArchitecture2
 public import Models
 
@@ -21,7 +22,7 @@ internal import Sharing
 ///
 /// **No `#if DEBUG` section here or in ``SettingsView``** — release and debug builds show the
 /// same tab. `Sync` and `View Logs` arrive with the CloudKit wiring (#29) and the log viewer
-/// (#28), and the `Acknowledgements` row's destination with #27.
+/// (#28).
 @Feature
 public struct SettingsFeature {
 	/// The question `Delete All Lists` asks before it goes ahead.
@@ -68,6 +69,10 @@ public struct SettingsFeature {
 	}
 
 	public struct State {
+		/// The pushed credits screen, or `nil`. The tab's one push, and the only child state here
+		/// that is not a prompt.
+		public var acknowledgements: Acknowledgements.State?
+
 		public var confirmDeleteAll: ConfirmDeleteAll.State?
 
 		/// What the gesture would delete, which is what the dialog states and what the
@@ -90,6 +95,8 @@ public struct SettingsFeature {
 	}
 
 	public enum Action {
+		case acknowledgements(Acknowledgements.Action)
+		case acknowledgementsButtonTapped
 		case confirmDeleteAll(ConfirmDeleteAll.Action)
 		case deleteAllListsButtonTapped
 	}
@@ -99,6 +106,12 @@ public struct SettingsFeature {
 	public var body: some Feature {
 		Update { state, action in
 			switch action {
+			case .acknowledgements:
+				break
+
+			case .acknowledgementsButtonTapped:
+				state.acknowledgements = Acknowledgements.State()
+
 			case .confirmDeleteAll(.deleteButtonTapped):
 				guard let deletion = state.confirmDeleteAll else { break }
 				deleteAll(comboIDs: deletion.comboIDs, listIDs: deletion.listIDs)
@@ -111,6 +124,7 @@ public struct SettingsFeature {
 				)
 			}
 		}
+		.ifLet(\.acknowledgements, action: \.acknowledgements) { Acknowledgements() }
 		.ifLet(\.confirmDeleteAll, action: \.confirmDeleteAll) { ConfirmDeleteAll() }
 	}
 

@@ -29,6 +29,16 @@ ensure-generated:
 generate:
 	tuist generate --no-open
 
+# Regenerate the committed Acknowledgements data from Package.resolved
+#
+# Run it whenever a dependency is added, removed or re-pinned — the app never runs the
+# generator, and a stale `Licenses.generated.swift` credits the wrong versions. `swift
+# package resolve` first because the licence text is read from `.build/checkouts`, which
+# Xcode builds never populate.
+licenses:
+	swift package resolve
+	swift tools/generate-licenses.swift
+
 # Lint, including the rule that guards `bundle: #bundle`
 lint:
 	swiftlint --quiet --strict
