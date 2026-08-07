@@ -50,9 +50,10 @@ jobs:
       # signed commits, and no CI workflow that a GITHUB_TOKEN-authored PR would fail to trigger —
       # so this is consistency across the two repos bought ahead of need, deliberately.
       #
-      # **It needs `LICENCES_APP_ID` and `LICENCES_APP_PRIVATE_KEY` on this repo.** They are set
-      # on SimpleTrackerForAniList rather than at the org, so until they are added here the job
-      # fails on this step. The app needs `contents: write` + `pull-requests: write`.
+      # `LICENCES_APP_ID` and `LICENCES_APP_PRIVATE_KEY` are set on this repo, and the
+      # `brzzdev-licences` app is installed on it with `contents: write` + `pull-requests: write`.
+      # Secrets are per-repository here rather than inherited: `brzzdev` is a user account, not an
+      # organisation, so there is no org-level secret for a new repo to pick these up from.
       - name: Mint app token
         id: app-token
         uses: actions/create-github-app-token@v3
