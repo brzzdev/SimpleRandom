@@ -854,8 +854,6 @@ internal enum Licenses {
 			name: "TCA26",
 			text: #"""
 			© 2026 Point-Free, Inc. All rights reserved.
-
-			The Composable Architecture 2 is distributed as an untagged branch and carries no licence file. This is the copyright notice its README states.
 			"""#,
 			type: "All rights reserved",
 			version: nil,

@@ -44,16 +44,13 @@ struct Resolved: Decodable {
 /// TCA26's README ends `© 2026 Point-Free, Inc. All rights reserved.` and the repository carries
 /// no `LICENSE`. That is the honest thing to display — it is an unreleased branch pinned for its
 /// `StoreActor` (ADR-0001), not open-source code with terms that were mislaid.
+///
+/// **The text is the notice and nothing else.** Prose explaining the situation would be our
+/// English rather than the package's, and it would ship past the string catalogues — the
+/// `Not localisable` exemption in `CONTEXT.md` covers generated third-party text, not commentary
+/// smuggled in beside it.
 let statedTerms: [String: (type: String, text: String)] = [
-	"TCA26": (
-		type: "All rights reserved",
-		text: """
-			© 2026 Point-Free, Inc. All rights reserved.
-
-			The Composable Architecture 2 is distributed as an untagged branch and carries no \
-			licence file. This is the copyright notice its README states.
-			"""
-	),
+	"TCA26": (type: "All rights reserved", text: "© 2026 Point-Free, Inc. All rights reserved."),
 ]
 
 /// Reads as SPDX where there is an identifier to read as, because that is the name people
@@ -160,29 +157,45 @@ for pin in resolved.pins {
 		.replacingOccurrences(of: #"\.git$"#, with: "", options: .regularExpression)
 	let checkout = checkouts.appendingPathComponent(name)
 
-	guard let file = licenceFile(in: checkout) else {
-		if let stated = statedTerms[name] {
-			entries.append(Entry(name: name, text: stated.text, type: stated.type, version: pin.state.version))
-		} else {
-			failures.append("\(name): no licence file in \(checkout.path), and no stated terms for it in this script")
+	// Checked before the licence file, so a checkout SwiftPM named something this script did not
+	// predict reads as the missing directory it is. Folded into "no licence file", it would hand
+	// a package in `statedTerms` its hand-written entry off a directory nobody ever looked in.
+	var isDirectory: ObjCBool = false
+	guard FileManager.default.fileExists(atPath: checkout.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+		failures.append("\(name): no checkout at \(checkout.path)")
+		continue
+	}
+
+	// A licence file and a hand-written entry are alternatives, so exactly one of the four
+	// combinations is a package this script can credit. `statedTerms` is a human having read a
+	// repository that had nothing to read: once the package ships a licence file that reading is
+	// stale, and silently preferring either one is how a screen ends up stating terms the package
+	// has since replaced.
+	switch (licenceFile(in: checkout), statedTerms[name]) {
+	case (let file?, nil):
+		let text = try String(contentsOf: file, encoding: .utf8)
+		guard let type = licenceType(of: text) else {
+			failures.append("\(name): \(file.lastPathComponent) matches no licence this script knows")
+			break
 		}
-		continue
-	}
+		// The one sequence that would close the raw literal early. No licence contains it, and if
+		// one ever does the fix is another `#` on the delimiters — which is a decision, not
+		// something to discover from a compile error in a nine-hundred-line generated file.
+		guard !text.contains("\"\"\"#") else {
+			failures.append("\(name): \(file.lastPathComponent) contains the raw string delimiter `\"\"\"#`")
+			break
+		}
+		entries.append(Entry(name: name, text: text, type: type, version: pin.state.version))
 
-	let text = try String(contentsOf: file, encoding: .utf8)
-	guard let type = licenceType(of: text) else {
-		failures.append("\(name): \(file.lastPathComponent) matches no licence this script knows")
-		continue
-	}
-	// The one sequence that would close the raw literal early. No licence contains it, and if one
-	// ever does the fix is another `#` on the delimiters — which is a decision, not something to
-	// discover from a compile error in a nine-hundred-line generated file.
-	guard !text.contains("\"\"\"#") else {
-		failures.append("\(name): \(file.lastPathComponent) contains the raw string delimiter `\"\"\"#`")
-		continue
-	}
+	case (nil, let stated?):
+		entries.append(Entry(name: name, text: stated.text, type: stated.type, version: pin.state.version))
 
-	entries.append(Entry(name: name, text: text, type: type, version: pin.state.version))
+	case (nil, nil):
+		failures.append("\(name): no licence file in \(checkout.path), and no stated terms for it in this script")
+
+	case (let file?, _?):
+		failures.append("\(name): now ships \(file.lastPathComponent) — delete its `statedTerms` entry")
+	}
 }
 
 guard failures.isEmpty else {

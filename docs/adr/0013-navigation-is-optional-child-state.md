@@ -6,6 +6,12 @@ ComposableArchitecture 2 does have stacks — `[Path.State]` plus `.forEach(…,
 
 Depth is one push on the Lists tab (`ListsFeature` → `ListDetail`) and two on Combine (`CombineFeature` → `ComboDetail` → `ListDetail`, because a member row pushes the real List detail — ADR-0014). The second level did not change the idiom; it is another `.navigationDestination(item:)`.
 
+## The one exception, and what it is not
+
+Settings' Acknowledgements list pushes a licence's full text off `var license: License?` — a plain optional **value**, not optional child state, rendered by a plain `LicenseView`. The detail screen has no actions, no effects and nothing for a reducer to own, so a `@Feature` there would exist only to satisfy the shape.
+
+**This is not a departure from what this ADR argues.** The argument is against `[Path.State]` stacks and for navigation driven by one optional held in state; both hold here, and the modifier is the same `.navigationDestination(item:)`. What varies is only what sits on the other end of the optional. The rule to read off this is: a push is optional state, and it is optional *child* state whenever the destination is a feature — which is every other push in the app.
+
 ## Consequences
 
 The push and the sheet are the same shape, which is one fewer thing to hold in your head, and the same `.ifLet` reasoning applies to both.

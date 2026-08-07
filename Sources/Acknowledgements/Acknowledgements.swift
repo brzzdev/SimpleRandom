@@ -21,12 +21,11 @@ public struct Acknowledgements {
 	public struct State {
 		/// The licence whose full text is pushed, or `nil` for the list.
 		///
-		/// **A plain optional value rather than optional child state**, which is the one place
-		/// this app departs from ADR-0013's idiom, and only in what is on the other end. The
-		/// detail screen renders a `String` and does nothing — no actions, no effects, nothing
-		/// for a reducer to own — so a `@Feature` there would exist purely to satisfy the shape.
-		/// What ADR-0013 is actually an argument about survives intact: the push is driven by one
-		/// optional held in state, not by a `[Path.State]` stack.
+		/// **A plain optional value rather than optional child state**, which is the one place in
+		/// the app where the far end of a push is not a feature. The detail screen renders a
+		/// `String` and does nothing — no actions, no effects, nothing for a reducer to own — so
+		/// a `@Feature` there would exist purely to satisfy the shape. ADR-0013 records this as
+		/// its one exception, and why it leaves the argument intact.
 		public var license: License?
 
 		/// Fixed for the life of the process, so a `let` read once rather than a global the view

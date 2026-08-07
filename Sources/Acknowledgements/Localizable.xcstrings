@@ -13,26 +13,26 @@
         }
       }
     },
-    "%@, %@ licence" : {
-      "comment" : "VoiceOver label for a licence row whose package has no version: the package's name, then its licence type.",
+    "%@, unversioned, %@" : {
+      "comment" : "VoiceOver label for a licence row whose package is pinned to a branch and so has no version: the package's name, then its licence type.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@, %@ licence"
+            "value" : "%@, unversioned, %@"
           }
         }
       }
     },
-    "%@, version %@, %@ licence" : {
+    "%@, version %@, %@" : {
       "comment" : "VoiceOver label for a licence row: the package's name, its version, then its licence type.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@, version %@, %@ licence"
+            "value" : "%@, version %@, %@"
           }
         }
       }

@@ -34,8 +34,14 @@ public struct AcknowledgementsView: View {
 	///
 	/// The `.plain` style hit-tests the label's drawn content, so without the `contentShape` a
 	/// short package name would leave most of the row dead — the same fact `Components`'
-	/// `IndexRowButton` exists to hold in one place, written out here because this target does
-	/// not depend on `Components` and one row does not justify making it.
+	/// `IndexRowButton` exists to hold in one place.
+	///
+	/// **`IndexRowButton` is not reused, and could not be.** It is an *index* row: it leads with
+	/// an emoji column and renders a 🎲 placeholder where a List or a Combo has not been given
+	/// one, which is a thing a package has no analogue of and no way to opt out of. `Components`
+	/// exists for treatment two tabs would otherwise write twice (`CONTEXT.md`, **Architecture**);
+	/// this is a third screen with a different row, so what it shares is the two modifiers rather
+	/// than the view.
 	private func row(_ license: License) -> some View {
 		Button {
 			store.send(.rowTapped(license))
@@ -52,8 +58,8 @@ public struct AcknowledgementsView: View {
 			// is the difference between a readable credit and half a package name (ADR-0018).
 			.fixedSize(horizontal: false, vertical: true)
 			.frame(maxWidth: .infinity, alignment: .leading)
-			// One element, one label: `1.8.2 · MIT` is read as `version 1.8.2, MIT licence`, and
-			// the `·` is not a thing VoiceOver should be pronouncing.
+			// One element, one label: `1.8.2 · MIT` is read as `version 1.8.2, MIT`, and the `·`
+			// is not a thing VoiceOver should be pronouncing.
 			.accessibilityElement(children: .ignore)
 			.accessibilityLabel(spokenLabel(license))
 			.contentShape(.rect)
@@ -79,11 +85,20 @@ public struct AcknowledgementsView: View {
 
 	/// The row said as one phrase, with the name in it: the visible row renders the name above
 	/// the caption, whereas the spoken label is one sentence and has to carry both (ADR-0022).
+	///
+	/// **No noun follows the type.** `MIT licence` reads better than `MIT` alone, but `type` is
+	/// not always an identifier a noun can follow: TCA26's is the sentence `All rights reserved`,
+	/// and `All rights reserved licence` is not English.
+	///
+	/// **A row with no version says so rather than going quiet**, which is also what makes the
+	/// key derivable: a String Catalog cannot name a symbol for a key that is nothing but
+	/// placeholders, so `%@, %@` fails the build outright. `unversioned` is the fact the missing
+	/// version *is* — the pin is a branch — said in the place the version would have been.
 	private func spokenLabel(_ license: License) -> Text {
 		guard let version = license.version else {
-			return Text("\(license.name), \(license.type) licence", bundle: #bundle)
+			return Text("\(license.name), unversioned, \(license.type)", bundle: #bundle)
 		}
 
-		return Text("\(license.name), version \(version), \(license.type) licence", bundle: #bundle)
+		return Text("\(license.name), version \(version), \(license.type)", bundle: #bundle)
 	}
 }
