@@ -238,49 +238,23 @@ extension RandomiseFeatureTests {
 	}
 
 	@Test
-	internal func aDeckNeverDealsACardItHasAlreadyDealtHoweverStaleThePoolIs() async throws {
+	internal func aDeckDrawsFromThePoolAndNothingElseRemembersWhatItDealt() async throws {
 		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza", "Ramen"])
 		var state = RandomiseFeature.State(scope: .list(deck))
 
-		// Unmounted, so nothing records these draws and the pool never shrinks: this is exactly
-		// the state a re-roll meets when it arrives before the row the last deal is writing has
-		// landed. The deck's own rule holds against it — a card it has dealt is spent, whatever
-		// the pool still says.
+		// Unmounted, so nothing records these draws and the pool never shrinks — and the deck
+		// therefore deals from two live cards every time. **That is the design, not a defect
+		// this test tolerates**: the pool is the only record of what has been dealt, and the
+		// feature never draws from a pool that a write in flight has not caught up with,
+		// because it refuses to draw at all while one is (ADR-0024).
 		//
-		// **Three draws, not two.** The window is as deep as the user can tap, not one deal
-		// deep: every draw arriving before the writes land sees the same unshrunk pool. An
-		// earlier version filtered only the card on screen, which survived the second draw and
-		// dealt the first card again on the third — the sheet showing a card the deck had spent,
-		// and on the Combine path a second `ComboDraw` row landing silently for it, since
-		// `comboDraws` is keyed on a surrogate id.
-		state.draw()
-		let first = try #require(state.result?.item)
-		state.draw()
-		let second = try #require(state.result?.item)
-
-		#expect(first != second)
-		#expect(Set([first, second]) == Set(pool))
-		#expect(state.dealt == Set(pool.map(\.id)))
-
-		// The third finds nothing left to deal and lands on exhaustion, off a pool that is still
-		// showing both cards. That is the correct answer: the deck is spent even though the
-		// database has not been told yet.
-		state.draw()
-		#expect(state.result == .exhausted)
+		// `draw()` is the pick and nothing more, which is what makes it assertable this way.
+		for _ in 1...10 {
+			state.draw()
+			#expect(state.result?.item.map(pool.contains) == true)
+		}
+		#expect(state.drawToken == 10)
 		#expect(state.pool == pool)
-		#expect(state.drawToken == 3)
-	}
-
-	@Test
-	internal func aPlainListKeepsNoMemoryOfWhatItHasDrawn() async throws {
-		let (lunch, _) = try await seedLunch(with: ["Pizza", "Ramen"])
-		var state = RandomiseFeature.State(scope: .list(lunch))
-
-		// The other side of the rule above: nothing is spent on the plain path, so the filter has
-		// nothing to filter and repeats stay legal (ADR-0004). Asserted because `dealt` is the
-		// one piece of state that could quietly turn a plain List into a Deck.
-		for _ in 1...10 { state.draw() }
-		#expect(state.dealt.isEmpty)
 	}
 
 	@Test
@@ -296,7 +270,6 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [tacos.id]
 			$0.drawToken = 1
 			$0.result = .item(tacos)
 		}
@@ -326,7 +299,6 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [ramen.id]
 			$0.drawToken = 1
 			$0.result = .item(ramen)
 		}
@@ -344,8 +316,6 @@ extension RandomiseFeatureTests {
 			// compared: a snapshot carries the whole state, whatever caused it to be taken.
 			$0.pool = []
 		}
-		// Exhaustion spends nothing — there was nothing left to spend.
-		#expect(store.dealt == [ramen.id])
 
 		// Reshuffle deletes every row belonging to this List's Items and deals from the deck it
 		// has just put back. Nothing here changes synchronously: the delete, the refill and the
@@ -355,16 +325,14 @@ extension RandomiseFeatureTests {
 			$0.drawToken = 3
 			// Two cards are live again, so which one comes out is the generator's business and
 			// not this suite's. Read from the store rather than written down; the claims worth
-			// making are the two `#expect`s below and the pool the deal leaves behind.
+			// making are the `#expect`s below and the pool the deal leaves behind.
 			//
-			// Reshuffle empties what this sheet has spent before dealing, so this holds the one
-			// card just dealt and not the one dealt before it — otherwise the put-back cards
-			// would still be filtered out and the reshuffle would deal into exhaustion.
-			$0.dealt = store.dealt
+			// The pool is the whole deck again by the time this draw happens: the delete landed
+			// and the reload waited for it, which is the one thing that makes a spent card live
+			// again.
 			$0.result = store.result
 			$0.pool = pool
 		}
-		#expect(store.dealt == Set(store.result?.item.map { [$0.id] } ?? []))
 
 		let dealt = try #require(store.result?.item)
 		#expect(pool.contains(dealt))
@@ -397,25 +365,29 @@ extension RandomiseFeatureTests {
 		await store.send(.reshuffleButtonTapped)?.value
 		await store.receive(\.deckReshuffled, timeout: .seconds(1)) {
 			$0.drawToken = 2
-			// Emptied by the reshuffle, then holding the one card it dealt straight afterwards.
-			$0.dealt = store.dealt
+			// The whole deck, put back by the delete this action follows, less nothing: the card
+			// it deals is taken out by the insert that has not run yet.
 			$0.result = store.result
 			$0.pool = pool
 		}
 		var dealt = [try #require(store.result?.item)]
+		try await settle(store)
 
 		// Then right through to the last card. Which card each draw lands on is the generator's
-		// business, and so is whether the row that removes it has landed by the time the store
-		// is asked — both are read from it rather than written down. The claims are the two
+		// business and is read from the store rather than written down. The claims are the two
 		// underneath: no card comes out twice, and the pool is always the deck minus what has
 		// been dealt.
+		//
+		// **Each draw's task is awaited before the next tap.** That is not a convenience: the
+		// deal's write and the reload that follows it are what make the pool authoritative, and
+		// the feature refuses a tap arriving before they finish (ADR-0024). Awaiting is what a
+		// user tapping at human speed does, and what the run below is about.
 		for draw in 2...pool.count {
-			store.send(.againButtonTapped) {
+			await store.send(.againButtonTapped) {
 				$0.drawToken = draw + 1
-				$0.dealt = store.dealt
 				$0.result = store.result
 				$0.pool = store.pool
-			}
+			}?.value
 			let card = try #require(store.result?.item)
 			#expect(!dealt.contains(card))
 			dealt.append(card)
@@ -428,10 +400,6 @@ extension RandomiseFeatureTests {
 		#expect(Set(dealt) == Set(pool))
 		#expect(dealt.map(\.title).sorted() == titles.sorted())
 		#expect(try await Set(draws()) == Set(pool.map(\.id)))
-		// The sheet's own reckoning agrees with the table, card for card. It is the thing the
-		// draw filters against, so a drift between the two is a card dealt twice or one never
-		// dealt at all.
-		#expect(store.dealt == Set(pool.map(\.id)))
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
 		store.send(.againButtonTapped) {
@@ -449,7 +417,6 @@ extension RandomiseFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [pizza.id]
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
@@ -467,6 +434,99 @@ extension RandomiseFeatureTests {
 			$0.result = .exhausted
 			$0.pool = []
 		}
+	}
+
+	@Test
+	internal func aReshuffleOnAnotherDeviceReachesAnOpenSheet() async throws {
+		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza"])
+		let pizza = try #require(pool.first)
+
+		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+			RandomiseFeature()
+		} changes: {
+			$0.drawToken = 1
+			$0.result = .item(pizza)
+		}
+		try await settle(store)
+		#expect(store.pool.isEmpty)
+
+		// The sheet is spent, and stays that way until something puts the cards back.
+		store.send(.againButtonTapped) {
+			$0.drawToken = 2
+			$0.result = .exhausted
+			// The opening deal emptied it. Nothing else moved at the time, so this is where that
+			// refresh is compared: a snapshot carries the whole state, whatever caused it.
+			$0.pool = []
+		}
+
+		// **Reshuffle, from somewhere this sheet cannot see.** Deck state syncs, so the rows can
+		// go while the sheet is open — from another device, or from the detail screen's own
+		// toolbar Reshuffle on this one. Written straight to the table rather than through the
+		// feature, because the point is that nothing told the sheet.
+		try await database.write { db in
+			try ListDraw.inList(deck.id).delete().execute(db)
+		}
+		try await store.state.$pool.load()
+
+		// And the sheet simply believes the pool — the card is back on offer, and the draw is
+		// forced onto it. This is what the earlier local guard could not do: it kept filtering
+		// these cards out and answered "That's the whole deck" over a full deck for as long as
+		// the sheet stayed open (ADR-0024).
+		await store.send(.againButtonTapped) {
+			$0.drawToken = 3
+			$0.result = .item(pizza)
+			// The refilled pool, compared here: the deal this draw starts empties it again, but
+			// only once the task below has run.
+			$0.pool = pool
+		}?.value
+		#expect(store.pool.isEmpty)
+		#expect(try await draws() == [pizza.id])
+	}
+
+	@Test
+	internal func aWriteThatFailsLeavesItsCardInTheDeck() async throws {
+		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza"])
+		let pizza = try #require(pool.first)
+		try await refuseDraws()
+
+		// A Deck whose insert throws. `withErrorReporting` reports it and the deal ends there —
+		// so the row is never written, and a card is spent only by a row that exists (ADR-0006).
+		// The report *is* the expected outcome here, which is what `withKnownIssue` says: the
+		// pick and the sheet are correct, and the database is the thing that failed.
+		// **The construction is inside the region, not just the settle.** The opening deal runs at
+		// mount, and its failure is reported before `TestStore.init` hands the store back — so a
+		// region covering only the wait below sees no issue and fails with "Known issue was not
+		// recorded". That is what forces the store to be declared first and assigned here.
+		var store: TestStore<RandomiseFeature>!
+		await withKnownIssue {
+			store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+				RandomiseFeature()
+			} changes: {
+				$0.drawToken = 1
+				$0.result = .item(pizza)
+			}
+			try await settle(store)
+		}
+
+		// Nothing persisted, so nothing was spent: the pool still holds the card and the deck is
+		// exactly as full as its row count says it is.
+		#expect(try await draws().isEmpty)
+		#expect(store.pool == pool)
+
+		// **And the card is still on offer.** This is the half that regressed under the local
+		// guard, which inserted into its own set before the write started and removed nothing on
+		// the failure path — so a one-card Deck reported exhaustion at a row count of zero,
+		// contradicting the rule that a Deck is exhausted when its row count equals its pool
+		// (ADR-0024). Degraded state is the write failure's doing; the deck's arithmetic is not
+		// allowed to be wrong as well.
+		await withKnownIssue {
+			await store.send(.againButtonTapped) {
+				$0.drawToken = 2
+				$0.result = .item(pizza)
+			}?.value
+		}
+		#expect(try await draws().isEmpty)
+		#expect(store.pool == pool)
 	}
 }
 
@@ -517,6 +577,23 @@ extension RandomiseFeatureTests {
 			try Item.where { $0.listID.eq(UUID(-1)) }.order { ($0.createdAt, $0.id) }.fetchAll(db)
 		}
 		return (lunch, pool)
+	}
+
+	/// Makes every future insert into `listDraws` throw, and nothing else.
+	///
+	/// A trigger rather than a closed or read-only database, because the reads have to keep
+	/// working: the pool is a live query over the very table this leaves alone, and a test about
+	/// a failed *write* that also broke the pool would prove nothing about which of the two put
+	/// the card back.
+	private func refuseDraws() async throws {
+		try await database.write { db in
+			try db.execute(
+				sql: """
+					CREATE TRIGGER "refuseDraws" BEFORE INSERT ON "listDraws"
+					BEGIN SELECT RAISE(ABORT, 'the write failed'); END
+					"""
+			)
+		}
 	}
 
 	/// Every Item this List has dealt, straight from the table.
