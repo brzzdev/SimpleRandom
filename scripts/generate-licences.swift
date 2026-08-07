@@ -107,21 +107,24 @@ func licenceTypes(in text: String) -> [String] {
 	return types
 }
 
-/// The licence file in a checkout, whichever of the six spellings the author used.
+/// Every licence file in a checkout, whichever of the six spellings the author used, sorted so
+/// the answer does not depend on what order the file system hands the directory back.
 ///
 /// Top level only. A `LICENSE` nested in a vendored subdirectory belongs to something this
 /// package embeds, not to the package, and picking one up by a recursive search would credit the
 /// wrong terms.
 ///
-/// `min()` rather than the directory's own order, which is whatever the file system hands back —
-/// a package carrying both `LICENSE` and `LICENSE.txt` should generate the same file on every
-/// machine.
-func licenceFile(in checkout: URL) -> URL? {
-	guard let names = try? FileManager.default.contentsOfDirectory(atPath: checkout.path) else { return nil }
+/// **All of them, and the caller demands exactly one.** Taking the first — `min()`, which is what
+/// this did — picks between them before anything has read what is in them, so a checkout shipping
+/// `LICENSE.APACHE` beside `LICENSE.MIT` is credited Apache and its dual terms never surface.
+/// Two files is the same ambiguity as one file matching two recognisers, and gets the same answer:
+/// this script does not choose, it refuses.
+func licenceFiles(in checkout: URL) -> [URL] {
+	guard let names = try? FileManager.default.contentsOfDirectory(atPath: checkout.path) else { return [] }
 	return
 		names
 		.filter { $0.range(of: #"^(licen[cs]e|copying)(\..+)?$"#, options: [.regularExpression, .caseInsensitive]) != nil }
-		.min()
+		.sorted()
 		.map(checkout.appendingPathComponent)
 }
 
@@ -217,13 +220,25 @@ for pin in resolved.pins {
 		continue
 	}
 
+	// Two licence files is a package offering terms this script has no basis to choose between —
+	// `LICENSE.APACHE` beside `LICENSE.MIT` is the ordinary shape of a dual licence — so it is
+	// refused before anything reads either one. Resolving it means deciding which applies and
+	// teaching this script that, deliberately; there is deliberately no flag that picks for you.
+	let files = licenceFiles(in: checkout)
+	guard files.count <= 1 else {
+		failures.append(
+			"\(name): ships \(files.map(\.lastPathComponent).joined(separator: " and ")) — read them and say which applies"
+		)
+		continue
+	}
+
 	// A licence file and a hand-written entry are alternatives, so exactly one of the four
 	// combinations is a package this script can credit. `statedTerms` is a human having read a
 	// repository that had nothing to read: once the package ships a licence file that reading is
 	// stale, and silently preferring either one is how a screen ends up stating terms the package
 	// has since replaced.
 	let credit: (text: String, type: String)
-	switch (licenceFile(in: checkout), statedTerms[name]) {
+	switch (files.first, statedTerms[name]) {
 	case (let file?, nil):
 		let text = try String(contentsOf: file, encoding: .utf8)
 		let types = licenceTypes(in: text)

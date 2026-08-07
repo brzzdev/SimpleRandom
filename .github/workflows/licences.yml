@@ -13,9 +13,13 @@ concurrency:
   group: licences
   cancel-in-progress: true
 
+# Read only, and tighter than SimpleTrackerForAniList's — deliberately, because this repo is
+# public. `GITHUB_TOKEN` covers the checkout and nothing else: the branch push, the commit and
+# the pull request are all made with the App token below, which carries its own `contents: write`
+# and `pull-requests: write`. Granting write here as well would widen what every step in a public
+# workflow run can do, to buy nothing.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   update:
