@@ -299,6 +299,10 @@ public struct RandomiseFeature {
 			case .item(let item) = state.result
 		else { return }
 
+		// Lifted out with the rest rather than read inside the task, which is where ``reload(_:
+		// waiting:)`` uses it: a dependency is resolved where it is declared, and the task
+		// outlives this call.
+		@Dependency(\.continuousClock) var clock
 		@Dependency(\.date.now) var now
 		@Dependency(\.defaultDatabase) var database
 		let pool = state.$pool
@@ -334,7 +338,7 @@ public struct RandomiseFeature {
 			// Discarded: there is nothing left to refuse. The Reshuffle below has a draw it can
 			// withhold when the pool never caught up; this task is the deal, and the card is
 			// already on screen.
-			await reload(pool)
+			await reload(pool, waiting: clock)
 		}
 	}
 
@@ -351,18 +355,35 @@ public struct RandomiseFeature {
 	/// the sync engine writes to it in the background (ADR-0002), so a read can lose a race it
 	/// would win a moment later. Each attempt reports.
 	///
+	/// **The waiting between attempts is the point, not the count of them.** `Database`'s
+	/// configuration leaves GRDB's `busyMode` at its `.immediateError` default, so a read
+	/// contending with a write fails the instant it collides rather than blocking — and three
+	/// immediate attempts would collide three times in the same instant, which is a spin
+	/// dressed as a retry. The delay is what gives the write it lost to time to land.
+	///
+	/// Nothing waits before the first attempt, so the path where the reload simply works never
+	/// touches the clock. **The suite enforces that rather than trusting it**: the test value
+	/// of `\.continuousClock` is an `UnimplementedClock`, so a wait on the happy path would
+	/// fail every Deck test rather than merely slow one down.
+	///
 	/// **Bounded, and therefore not a guarantee.** A read that keeps failing will not start
 	/// working because a sheet wants it to, and the alternative to giving up is holding both
 	/// buttons dead for the life of the sheet. When it does give up, the live observation
 	/// behind ``State/pool`` is the last line of defence and that draw degrades to racing it —
 	/// the residual ADR-0024 records rather than claims to have closed.
 	@discardableResult
-	private func reload(_ pool: FetchAll<Item>) async -> Bool {
-		for _ in 1...3 {
+	private func reload(_ pool: FetchAll<Item>, waiting clock: any Clock<Duration>) async -> Bool {
+		// The schedule *is* the bound: one attempt per entry, plus the first.
+		let backoffs: [Duration] = [.milliseconds(100), .milliseconds(300)]
+		for attempt in 0...backoffs.count {
 			// `Void?` is spelled out for the reason the two writes give: the closure returns
 			// nothing, and an inferred `()?` does not resolve the overload.
 			let loaded: Void? = await withErrorReporting { try await pool.load() }
 			guard loaded == nil else { return true }
+			guard attempt < backoffs.count else { break }
+			// `try?` because a cancelled sleep should fall through to the next attempt rather
+			// than report: the sheet closing is not a database failure.
+			try? await clock.sleep(for: backoffs[attempt])
 		}
 		return false
 	}
@@ -373,6 +394,8 @@ public struct RandomiseFeature {
 	/// whether the deck is spent or barely touched. It deals afterwards because the button
 	/// sits where **Again** was, and a button in that position produces a result.
 	private func reshuffleAndDeal(_ state: State) {
+		// Lifted out for the reason ``deal(_:)`` gives, and used in the same place.
+		@Dependency(\.continuousClock) var clock
 		@Dependency(\.defaultDatabase) var database
 		// Lifted out for the reason ``deal(_:)`` gives, and the same value: which table to
 		// delete from, and which id names the rows.
@@ -400,7 +423,7 @@ public struct RandomiseFeature {
 			// And the draw below has to see the deck put back rather than race the observation
 			// that refills the pool, so a delete the pool never caught up with deals nothing
 			// either — it would draw from the spent pool and land straight back on exhaustion.
-			guard deleted != nil, await reload(pool) else { return }
+			guard deleted != nil, await reload(pool, waiting: clock) else { return }
 			try store.send(.deckReshuffled)
 		}
 	}
