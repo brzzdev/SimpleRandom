@@ -37,10 +37,26 @@ jobs:
       # `brew install` rather than SimpleTrackerForAniList's `brew bundle`, because this repo has
       # no Brewfile. `just` is all this job needs — the recipe runs the generator through the same
       # two commands a human would, so the workflow cannot drift from what regeneration means.
-      # No SPM authentication step either: every dependency here is public (`BrzzUtils` arrives
-      # with #28, and this will need one then).
       - name: Install tools
         run: brew install just
+
+      # `pointfreeco/TCA26` is a **private** repository — the Point-Free beta this app is pinned
+      # to for `StoreActor` (ADR-0001) — so `swift package resolve` cannot clone it anonymously
+      # and the job dies before it reaches the generator. Every other pin is public.
+      #
+      # A classic PAT rather than the fine-grained kind SimpleTrackerForAniList uses for its own
+      # private packages: a fine-grained token can only grant repositories owned by its resource
+      # owner, and this one belongs to `pointfreeco`. Access comes from the authenticated user's
+      # own membership, which only a classic `repo`-scoped token carries.
+      #
+      # Scoped to that one repository, exactly as the sibling scopes its own. A blanket rewrite of
+      # `https://github.com/` would also capture the `create-pull-request` push below and send it
+      # out under this token instead of the app's.
+      - name: Authenticate to private SPM dependencies
+        env:
+          SPM_TOKEN: ${{ secrets.SPM_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${SPM_TOKEN}@github.com/pointfreeco/TCA26".insteadOf "https://github.com/pointfreeco/TCA26"
 
       - name: Regenerate licences
         run: just licences
