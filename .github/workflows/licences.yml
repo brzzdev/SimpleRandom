@@ -49,16 +49,21 @@ jobs:
       # owner, and this one belongs to `pointfreeco`. Access comes from the authenticated user's
       # own membership, which only a classic `repo`-scoped token carries.
       #
-      # Scoped to that one repository, exactly as the sibling scopes its own. A blanket rewrite of
+      # **That breadth is why the credential is handed over in the environment rather than written
+      # to `~/.gitconfig`.** A `repo`-scoped classic token reads every private repository its owner
+      # can, so a copy sitting in the runner's git config would stay readable by every later step —
+      # including the two third-party actions below — for the rest of the job. `GIT_CONFIG_*` is
+      # scoped to this step alone, so the token never touches disk and there is no cleanup to skip
+      # on a failure path. `swift package resolve` shells out to `git`, which inherits it.
+      #
+      # Scoped to that one repository, as the sibling scopes its own. A blanket rewrite of
       # `https://github.com/` would also capture the `create-pull-request` push below and send it
       # out under this token instead of the app's.
-      - name: Authenticate to private SPM dependencies
-        env:
-          SPM_TOKEN: ${{ secrets.SPM_TOKEN }}
-        run: |
-          git config --global url."https://x-access-token:${SPM_TOKEN}@github.com/pointfreeco/TCA26".insteadOf "https://github.com/pointfreeco/TCA26"
-
       - name: Regenerate licences
+        env:
+          GIT_CONFIG_COUNT: 1
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.SPM_TOKEN }}@github.com/pointfreeco/TCA26.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/pointfreeco/TCA26
         run: just licences
 
       # A GitHub App token rather than GITHUB_TOKEN, matching SimpleTrackerForAniList. Neither of
