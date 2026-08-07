@@ -35,13 +35,20 @@ let package = Package(
 		// costs only enum-table support, which this schema does not use.
 		.package(url: "https://github.com/pointfreeco/sqlite-data", from: "1.7.0"),
 		.package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.12.0"),
-		// Named here only so `ListsFeature` may `import SwiftUINavigation` for `alert(item:)`,
-		// whose single-optional form SwiftUI still has no equivalent of. TCA26 already
+		// Named here only so the feature targets may `import SwiftUINavigation` for
+		// `alert(item:)` and `confirmationDialog(item:)`, whose single-optional forms SwiftUI
+		// still has no equivalent of. TCA26 already
 		// depends on this package and pins this branch, so the resolved graph is unchanged —
 		// the entry declares a dependency the app was already building against transitively.
 		// The branch must stay in step with TCA26's, or resolution fails outright rather than
 		// silently taking one of them.
 		.package(url: "https://github.com/pointfreeco/swift-navigation", branch: "relax-sendable"),
+		// Named here for the same reason as swift-navigation above: `Preferences` declares the
+		// `theme` shared key and `App` reads it, so both name `Sharing` types in their own
+		// source — and `Preferences` names one in its *public* API. SQLiteData and TCA26 both
+		// already depend on this package, so the resolved graph is unchanged; the entry
+		// declares a dependency the app was already building against transitively.
+		.package(url: "https://github.com/pointfreeco/swift-sharing", from: "2.9.0"),
 	],
 	targets: [
 		.target(
@@ -57,7 +64,9 @@ let package = Package(
 				.product(name: "ComposableArchitecture2", package: "TCA26"),
 				"Database",
 				.product(name: "Dependencies", package: "swift-dependencies"),
+				"Models",
 				"Preferences",
+				.product(name: "Sharing", package: "swift-sharing"),
 			],
 		),
 		.target(
@@ -127,7 +136,10 @@ let package = Package(
 		),
 		.target(
 			name: "Preferences",
-			dependencies: ["Models"],
+			dependencies: [
+				"Models",
+				.product(name: "Sharing", package: "swift-sharing"),
+			],
 		),
 		.target(
 			name: "RandomiseFeature",
@@ -149,6 +161,7 @@ let package = Package(
 				"Database",
 				"Models",
 				"Preferences",
+				.product(name: "SwiftUINavigation", package: "swift-navigation"),
 			],
 		),
 		// Four test targets, chosen by risk rather than by symmetry (ADR-0019). The other

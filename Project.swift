@@ -65,6 +65,9 @@ let project = Project(
 			deploymentTargets: .iOS("26.0"),
 			infoPlist: .extendingDefault(with: [
 				"CFBundleDisplayName": "SimpleRandom",
+				// Spelled out because Settings' `About` section renders it. Tuist's default is
+				// `1.0`, and the row is specified as `Version 1.0.0 (1)`.
+				"CFBundleShortVersionString": "1.0.0",
 				"UILaunchScreen": [:],
 			]),
 			// AppHost renders no UI of its own — it exists to make `SimpleRandomApp`, which

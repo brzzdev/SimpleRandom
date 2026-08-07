@@ -9,12 +9,20 @@ internal import AppFeature
 internal import ComposableArchitecture2
 internal import Database
 internal import Dependencies
+internal import Models
+internal import Preferences
 internal import SQLiteData
+internal import Sharing
 
 /// The composition root. `AppHost` makes this the process entry point; everything the app
 /// is made of hangs off the one store created here.
 public struct SimpleRandomApp: App {
 	@StateObject private var store: StoreOf<AppFeature>
+
+	/// Read here rather than passed down from Settings, because appearance is a fact about
+	/// the whole window and not about the tab you set it on. Both sites reach the same
+	/// `@Shared` key, so the picker moving is the scene re-rendering.
+	@Shared(.theme) private var theme
 
 	public init() {
 		// Prepared before the store is assigned, and written in this order rather than as a
@@ -33,6 +41,22 @@ public struct SimpleRandomApp: App {
 	public var body: some Scene {
 		WindowGroup {
 			AppView(store: store)
+				.preferredColorScheme(theme.colorScheme)
+		}
+	}
+}
+
+extension Theme {
+	/// What SwiftUI wants: an *override*, where `nil` means "whatever the system is doing".
+	///
+	/// The mapping lives here rather than on `Theme` itself because `Models` renders nothing
+	/// and imports no SwiftUI — and because this is the only place in the app that turns the
+	/// preference into an appearance.
+	fileprivate var colorScheme: ColorScheme? {
+		switch self {
+		case .dark: .dark
+		case .light: .light
+		case .system: nil
 		}
 	}
 }
