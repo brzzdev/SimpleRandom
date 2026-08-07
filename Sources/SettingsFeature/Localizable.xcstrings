@@ -67,6 +67,39 @@
         }
       }
     },
+    "Delete all ^[%lld combos](inflect: true)?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete all ^[%lld combos](inflect: true)?"
+          }
+        }
+      }
+    },
+    "Delete all ^[%lld lists](inflect: true) and ^[%lld combos](inflect: true)?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete all ^[%lld lists](inflect: true) and ^[%lld combos](inflect: true)?"
+          }
+        }
+      }
+    },
+    "Delete all ^[%lld lists](inflect: true) and ^[%lld items](inflect: true)?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete all ^[%lld lists](inflect: true) and ^[%lld items](inflect: true)?"
+          }
+        }
+      }
+    },
     "Delete all ^[%lld lists](inflect: true), ^[%lld items](inflect: true) and ^[%lld combos](inflect: true)?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -74,6 +107,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Delete all ^[%lld lists](inflect: true), ^[%lld items](inflect: true) and ^[%lld combos](inflect: true)?"
+          }
+        }
+      }
+    },
+    "Delete all ^[%lld lists](inflect: true)?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete all ^[%lld lists](inflect: true)?"
           }
         }
       }

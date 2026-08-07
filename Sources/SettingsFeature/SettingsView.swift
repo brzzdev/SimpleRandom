@@ -92,6 +92,73 @@ public struct SettingsView: View {
 		}
 	}
 
+	/// What the delete-everything dialog asks, in the five shapes it can take.
+	///
+	/// **A clause is dropped rather than counted at zero.** All three counted unconditionally
+	/// reads `Delete all 3 lists, 10 items and 0 combos?` to everyone who has never opened the
+	/// Combine tab, and `Delete all 0 lists, 0 items and 2 combos?` to anyone whose Combos
+	/// outlived their Lists. `inflect: true` agrees the noun with its number; it does not
+	/// suppress a zero. Awkward copy is bad anywhere and worse here, where the counts *are*
+	/// the safety mechanism.
+	///
+	/// **Five whole phrases rather than clauses joined in Swift**, which is ADR-0022's rule and
+	/// the reason this is a `switch` and not a `[String].joined(separator:)`. A join hands the
+	/// translator fragments with no control over word order, and picks the separator and the
+	/// "and" in code by someone thinking in English. Items imply Lists, so of the eight
+	/// combinations only these five exist, and the all-zero one cannot arise — the row that
+	/// raises this is disabled there.
+	///
+	/// Inflected here rather than left to the `Text`, because a dialog title is not rendered by
+	/// SwiftUI — it is extracted as a plain string for `UIAlertController`, and that extraction
+	/// runs no morphology pass, so a `Text` holding the key renders the literal
+	/// `^[7 lists](inflect: true)`. `AttributedString(localized:bundle:)` runs the pass itself,
+	/// and CONTEXT.md's enumerated call sites carry it.
+	private func title(listCount: Int, itemCount: Int, comboCount: Int) -> Text {
+		guard listCount > 0 else {
+			// Only Combos left to take, which is a Combo outliving every List it was built from.
+			return Text(
+				AttributedString(
+					localized: "Delete all ^[\(comboCount) combos](inflect: true)?",
+					bundle: #bundle,
+				)
+			)
+		}
+
+		return switch (itemCount > 0, comboCount > 0) {
+		case (true, true):
+			Text(
+				AttributedString(
+					localized: "Delete all ^[\(listCount) lists](inflect: true), ^[\(itemCount) items](inflect: true) and ^[\(comboCount) combos](inflect: true)?",
+					bundle: #bundle,
+				)
+			)
+
+		case (true, false):
+			Text(
+				AttributedString(
+					localized: "Delete all ^[\(listCount) lists](inflect: true) and ^[\(itemCount) items](inflect: true)?",
+					bundle: #bundle,
+				)
+			)
+
+		case (false, true):
+			Text(
+				AttributedString(
+					localized: "Delete all ^[\(listCount) lists](inflect: true) and ^[\(comboCount) combos](inflect: true)?",
+					bundle: #bundle,
+				)
+			)
+
+		case (false, false):
+			Text(
+				AttributedString(
+					localized: "Delete all ^[\(listCount) lists](inflect: true)?",
+					bundle: #bundle,
+				)
+			)
+		}
+	}
+
 	/// Alone in an unheadered trailing section, because it is not one of a set of things you
 	/// might do — it is the thing you do once and cannot undo.
 	///
@@ -125,18 +192,7 @@ public struct SettingsView: View {
 			item: $store.scope(\.confirmDeleteAll, action: \.confirmDeleteAll),
 			titleVisibility: .visible,
 		) { deletion in
-			// Inflected here rather than left to the `Text`, because a dialog title is not
-			// rendered by SwiftUI — it is extracted as a plain string for
-			// `UIAlertController`, and that extraction runs no morphology pass, so a `Text`
-			// holding the key renders the literal `^[7 lists](inflect: true)`.
-			// `AttributedString(localized:bundle:)` runs the pass itself, and CONTEXT.md's
-			// enumerated call sites carry it.
-			Text(
-				AttributedString(
-					localized: "Delete all ^[\(deletion.listCount) lists](inflect: true), ^[\(deletion.itemCount) items](inflect: true) and ^[\(deletion.comboCount) combos](inflect: true)?",
-					bundle: #bundle,
-				)
-			)
+			title(listCount: deletion.listCount, itemCount: deletion.itemCount, comboCount: deletion.comboCount)
 		} actions: { _ in
 			Button(role: .destructive) {
 				store.send(.confirmDeleteAll(.deleteButtonTapped))
