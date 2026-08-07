@@ -2,8 +2,15 @@
 # successful `| xcbeautify`, which would otherwise let a red build report green.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-destination := "platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5"
+destination := "platform=iOS Simulator,name=" + sim_name + ",OS=" + sim_os
 scheme := "SimpleRandom"
+# The simulator every iOS destination resolves to. `latest` is right on a runner,
+# whose Xcode ships one iOS runtime — so the CI image tag is the pin, and there
+# is no version to bump in here. Locally it is wrong whenever an Xcode beta sits
+# alongside the release, so set `IOS_SIM_OS` in a shell profile: one export
+# covers every repo.
+sim_name := env("IOS_SIM_DEVICE", "iPhone 17 Pro")
+sim_os := env("IOS_SIM_OS", "latest")
 # Xcode refuses to build with a Swift macro plugin until someone has approved it in the
 # UI, and this graph brings several. There is nothing to click on a fresh clone, which is
 # why this belongs to every Xcode invocation rather than to CI.
