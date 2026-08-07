@@ -51,23 +51,6 @@ public struct RandomiseFeature {
 			}
 		}
 
-		/// The cards this sheet has dealt, whether or not ``pool`` has caught up with them.
-		///
-		/// **A Deck's pool is a live query, and the row that removes a dealt card is written from
-		/// a task**, so between a deal and its reload the pool still offers cards the deck has
-		/// spent. This is what the draw filters against, and it has to be the whole set: filtering
-		/// only the card on screen survives one stale draw and not two, so a third rapid tap on a
-		/// two-card deck dealt the first card again.
-		///
-		/// Empty on the plain path, where nothing is spent and a repeat is legal (ADR-0004).
-		/// Cleared by Reshuffle, which is what puts the cards back.
-		///
-		/// A card whose insert *failed* stays here, so this sheet will not offer it twice even
-		/// though the database never recorded it. That is the safer half of a state already
-		/// degraded by a reported write failure — the card is available again next time the sheet
-		/// opens, because nothing persisted it.
-		private(set) public var dealt: Set<Item.ID> = []
-
 		/// Incremented on every draw and rendered by nothing.
 		///
 		/// A re-roll landing on the Item already shown changes no other state, so this is the
@@ -187,15 +170,6 @@ public struct RandomiseFeature {
 		/// nothing, and adding the same text twice is the user's own weighting mechanism
 		/// (ADR-0004). A one-item pool therefore always returns that Item.
 		///
-		/// Forgets what this sheet has dealt, because Reshuffle has just deleted the rows that
-		/// recorded it.
-		///
-		/// Paired with the delete rather than folded into ``draw()``: the draw's job is to refuse
-		/// a spent card, and the only thing that unspends one is the rows going.
-		internal mutating func putTheDeckBack() {
-			dealt = []
-		}
-
 		/// Lives on `State` so that the opening draw and a re-roll are literally the same pick —
 		/// one arrives on mount, the other on an action, and both are the feature's own logic
 		/// rather than a client behind a seam, which is what lets a test seed the generator and
@@ -203,20 +177,17 @@ public struct RandomiseFeature {
 		internal mutating func draw() {
 			@Dependency(\.withRandomNumberGenerator) var withRandomNumberGenerator
 
-			// Lifted out of the closure: `pool` is a property of an `inout self` here, and the
-			// generator's closure is `@Sendable`.
+			// **The pool is the only record of what a Deck has dealt.** It is a live query over the
+			// Items with no draw row, so a card is in it exactly while the deck still holds it —
+			// which is the rule `CONTEXT.md` states, read straight off the state that implements
+			// it. Nothing here compensates for a pool that has not caught up with a write in
+			// flight; ``RandomiseFeature`` refuses to draw at all while one is (ADR-0024).
 			//
-			// **A Deck never deals a card it has already dealt, whatever the pool still says.**
-			// The pool is a live query and the row that takes a dealt Item out of it is written
-			// from a task, so every draw arriving before those writes land sees cards the deck
-			// has spent. The rule is the deck's own, applied to the state that has not caught up
-			// with it yet — and it is applied to ``dealt`` rather than to the card on screen,
-			// because the screen holds one card and the window holds as many as the user can tap
-			// through. Filtering the shown card alone survived one stale draw and not two.
-			let isDeck = scope.drawMode == .deck
-			let candidates = isDeck ? pool.filter { !dealt.contains($0.id) } : pool
+			// Copied out rather than read through `self`: `pool` is a property of an `inout self`
+			// here, and the generator's closure is `@Sendable`.
+			let pool = pool
 			guard let drawn = withRandomNumberGenerator({ generator in
-				candidates.randomElement(using: &generator)
+				pool.randomElement(using: &generator)
 			}) else {
 				// A Deck with nothing left to deal is exhausted, and says so in place of the
 				// result. The token moves because that *is* the reveal — the element an
@@ -226,18 +197,12 @@ public struct RandomiseFeature {
 				// A plain List or Combo draws nothing and says nothing here. Its pool is empty
 				// only when the List — or every member List — is, and the pinned bar is disabled
 				// then, so the user cannot reach it.
-				guard isDeck else { return }
+				guard scope.drawMode == .deck else { return }
 				result = .exhausted
 				drawToken += 1
 				return
 			}
 
-			// Spent here rather than in ``RandomiseFeature/deal(_:)``, which is where the *row* is
-			// written: the row records the deal for every future sitting, and this stops this one
-			// dealing the card again in the window before that row lands. A plain List or Combo
-			// records neither — repeats are legal there, and are the reason the sheet
-			// acknowledges a re-roll at all (ADR-0004, ADR-0017).
-			if isDeck { dealt.insert(drawn.id) }
 			result = .item(drawn)
 			drawToken += 1
 		}
@@ -251,8 +216,14 @@ public struct RandomiseFeature {
 		case reshuffleButtonTapped
 	}
 
-	/// The in-flight reshuffle, so a second tap can be told there is one.
-	@StoreTaskID var reshuffle
+	/// The Deck write in flight — the deal's insert and the Reshuffle's delete alike, on one id
+	/// because what both buttons need to know is the same thing: whether the pool is currently
+	/// behind the database.
+	///
+	/// Nothing is ever attached to it on the plain path, because ``deal(_:)`` returns before it
+	/// reaches a task there and a plain List has no Reshuffle. So `isRunning` is permanently
+	/// false there, and **Again** is ungated without a branch saying so (ADR-0004).
+	@StoreTaskID var deckWrite
 
 	public init() {}
 
@@ -260,22 +231,44 @@ public struct RandomiseFeature {
 		Update { state, action in
 			switch action {
 			case .againButtonTapped:
+				// **A Deck does not draw while one of its writes is in flight.** The pool is a live
+				// query and the row that takes a dealt card out of it is written from a task, so a
+				// draw arriving before that row lands would pick from a pool still offering it. The
+				// deal below awaits both the write and the reload, so refusing until it settles is
+				// what makes the pool authoritative at the moment it is read (ADR-0024).
+				//
+				// A silent no-op, as the four other guards of this shape in the app are
+				// (``ItemEditor``'s save, and the two editors on the Combine tab). There is no
+				// visible disable: `StoreTaskID.isRunning` is not observable, so a view reading it
+				// would not re-render when it flips.
+				//
+				// Deliberately untested, for the reason ``ItemEditor`` gives about its own guard: a
+				// `TestStore` runs the first effect to completion before it delivers the second
+				// action, so a test written against this passes with the guard removed.
+				guard !deckWrite.isRunning else { return }
 				// In place, with no memory of the last result: a plain List may deal the same Item
-				// twice in a row, and nothing suppresses it. A Deck cannot repeat, because the
-				// draw below is over what it has not dealt.
+				// twice in a row, and nothing suppresses it. A Deck cannot repeat, because the pool
+				// it draws from no longer holds the cards it has dealt.
 				state.draw()
 				deal(state)
 
 			case .deckReshuffled:
-				// The cards are back in the database, so they are back in this sheet's reckoning
-				// too — before the draw, or every card the deck just put back would still be
-				// filtered out of it and the reshuffle would deal straight back into exhaustion.
-				// The delete this follows is the one thing that makes a spent card live again.
-				state.putTheDeckBack()
+				// **Not guarded.** This is sent from inside the reshuffle's own task, so the write
+				// it belongs to is still in flight and a guard here would refuse the very draw the
+				// Reshuffle exists to produce. Only the two buttons are gated.
+				//
+				// The delete has landed and the pool has been refilled, so the deck really is back
+				// — there is nothing else to put back.
 				state.draw()
 				deal(state)
 
 			case .reshuffleButtonTapped:
+				// The same guard, and the same reasoning read from the other end: two Reshuffles
+				// would each put the deck back and deal from it, so the second lands on a card the
+				// user never asked for — and a Reshuffle racing a deal already in flight could
+				// delete every row and *then* have that insert land, stranding one spent card in a
+				// deck the user has just put back.
+				guard !deckWrite.isRunning else { return }
 				reshuffleAndDeal(state)
 			}
 		}
@@ -306,14 +299,21 @@ public struct RandomiseFeature {
 			case .item(let item) = state.result
 		else { return }
 
+		// Lifted out with the rest rather than read inside the task, which is where ``reload(_:
+		// waiting:)`` uses it: a dependency is resolved where it is declared, and the task
+		// outlives this call.
+		@Dependency(\.continuousClock) var clock
 		@Dependency(\.date.now) var now
 		@Dependency(\.defaultDatabase) var database
 		let pool = state.$pool
 		// Lifted out: the task outlives this call, and `State` is not the thing to send into it
 		// — the scope is a value, and it is the whole of what the write needs.
 		let scope = state.scope
-		store.addTask {
-			await withErrorReporting {
+		// On ``deckWrite`` so that the next tap can be told this is still going. `addTask(id:)`
+		// tracks rather than cancels, so this sitting alongside a Reshuffle on the same id is
+		// intended: what the guards ask is whether *any* Deck write is outstanding.
+		store.addTask(id: deckWrite) {
+			let inserted: Void? = await withErrorReporting {
 				try await database.write { db in
 					// One row per dealt Item on both paths — the same mechanism in two tables,
 					// because an Item belongs to exactly one List and to any number of Combos
@@ -329,12 +329,63 @@ public struct RandomiseFeature {
 						try ListDraw.insert { ListDraw(itemID: item.id, createdAt: now) }.execute(db)
 					}
 				}
-				// The pool is a live query, and the observation that takes the dealt Item out of
-				// it arrives on its own schedule. Waiting for it here is what stops the next draw
-				// seeing a card that has already gone.
-				try await pool.load()
 			}
+			// **An insert that failed spent nothing**, so there is nothing for the pool to catch
+			// up with — the card is still in the deck and the pool already says so, because it
+			// never changed. Told apart from the case below rather than sharing its error
+			// handling: only one of the two leaves the pool behind the database.
+			guard inserted != nil else { return }
+			// Discarded: there is nothing left to refuse. The Reshuffle below has a draw it can
+			// withhold when the pool never caught up; this task is the deal, and the card is
+			// already on screen.
+			await reload(pool, waiting: clock)
 		}
+	}
+
+	/// Makes ``State/pool`` reflect a Deck write that has just committed, and says whether it
+	/// managed to.
+	///
+	/// **Awaited before the task holding ``deckWrite`` ends, which is the whole point.** The
+	/// guard is released when that task ends, so ending it over a pool that has not caught up
+	/// hands the next draw a pool still offering a card the database has already recorded as
+	/// dealt — the one ordering that survives serialising the writes. A commit is not finished
+	/// until the pool shows it.
+	///
+	/// Retried, because the realistic failure is transient: the app opens a `DatabasePool` and
+	/// the sync engine writes to it in the background (ADR-0002), so a read can lose a race it
+	/// would win a moment later. Each attempt reports.
+	///
+	/// **The waiting between attempts is the point, not the count of them.** `Database`'s
+	/// configuration leaves GRDB's `busyMode` at its `.immediateError` default, so a read
+	/// contending with a write fails the instant it collides rather than blocking — and three
+	/// immediate attempts would collide three times in the same instant, which is a spin
+	/// dressed as a retry. The delay is what gives the write it lost to time to land.
+	///
+	/// Nothing waits before the first attempt, so the path where the reload simply works never
+	/// touches the clock. **The suite enforces that rather than trusting it**: the test value
+	/// of `\.continuousClock` is an `UnimplementedClock`, so a wait on the happy path would
+	/// fail every Deck test rather than merely slow one down.
+	///
+	/// **Bounded, and therefore not a guarantee.** A read that keeps failing will not start
+	/// working because a sheet wants it to, and the alternative to giving up is holding both
+	/// buttons dead for the life of the sheet. When it does give up, the live observation
+	/// behind ``State/pool`` is the last line of defence and that draw degrades to racing it —
+	/// the residual ADR-0024 records rather than claims to have closed.
+	@discardableResult
+	private func reload(_ pool: FetchAll<Item>, waiting clock: any Clock<Duration>) async -> Bool {
+		// The schedule *is* the bound: one attempt per entry, plus the first.
+		let backoffs: [Duration] = [.milliseconds(100), .milliseconds(300)]
+		for attempt in 0...backoffs.count {
+			// `Void?` is spelled out for the reason the two writes give: the closure returns
+			// nothing, and an inferred `()?` does not resolve the overload.
+			let loaded: Void? = await withErrorReporting { try await pool.load() }
+			guard loaded == nil else { return true }
+			guard attempt < backoffs.count else { break }
+			// `try?` because a cancelled sleep should fall through to the next attempt rather
+			// than report: the sheet closing is not a database failure.
+			try? await clock.sleep(for: backoffs[attempt])
+		}
+		return false
 	}
 
 	/// Puts the whole deck back, then deals from it.
@@ -343,25 +394,18 @@ public struct RandomiseFeature {
 	/// whether the deck is spent or barely touched. It deals afterwards because the button
 	/// sits where **Again** was, and a button in that position produces a result.
 	private func reshuffleAndDeal(_ state: State) {
-		// Not a second time while the first is still in flight. Each tap would otherwise
-		// put the deck back and deal from it independently, so two would deal twice — the
-		// second landing on a card the user never asked for, or, on a one-card deck, straight
-		// back on "That's the whole deck" a moment after the card appeared.
-		//
-		// Deliberately untested, for the reason ``ItemEditor`` gives about its own guard: a
-		// `TestStore` runs the first effect to completion before it delivers the second action,
-		// so a test written against this passes with the guard removed.
-		guard !reshuffle.isRunning else { return }
-
+		// Lifted out for the reason ``deal(_:)`` gives, and used in the same place.
+		@Dependency(\.continuousClock) var clock
 		@Dependency(\.defaultDatabase) var database
 		// Lifted out for the reason ``deal(_:)`` gives, and the same value: which table to
 		// delete from, and which id names the rows.
 		let scope = state.scope
 		let pool = state.$pool
-		store.addTask(id: reshuffle) {
+		// The same id the deal writes under, so that each button can see the other's work.
+		store.addTask(id: deckWrite) {
 			// `Void?` is spelled out because the closure returns nothing, and an inferred `()?`
 			// is a warning.
-			let reshuffled: Void? = await withErrorReporting {
+			let deleted: Void? = await withErrorReporting {
 				try await database.write { db in
 					// A hard delete of the whole set on either path, which is what makes Reshuffle
 					// the exact inverse of the rows the deals wrote (ADR-0006). A Combo puts back
@@ -372,13 +416,14 @@ public struct RandomiseFeature {
 					case .list(let list): try ListDraw.inList(list.id).delete().execute(db)
 					}
 				}
-				// The draw that follows has to see the deck put back rather than race the
-				// observation that refills the pool, so this asks for it and waits.
-				try await pool.load()
 			}
 			// A failed delete leaves the deck exactly as it was. Dealing anyway would land on
 			// exhaustion again and read as a dead button.
-			guard reshuffled != nil else { return }
+			//
+			// And the draw below has to see the deck put back rather than race the observation
+			// that refills the pool, so a delete the pool never caught up with deals nothing
+			// either — it would draw from the spent pool and land straight back on exhaustion.
+			guard deleted != nil, await reload(pool, waiting: clock) else { return }
 			try store.send(.deckReshuffled)
 		}
 	}

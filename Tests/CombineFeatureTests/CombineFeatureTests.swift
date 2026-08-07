@@ -1103,7 +1103,6 @@ extension CombineFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [sushi.id]
 			$0.drawToken = 1
 			$0.result = .item(sushi)
 		}
@@ -1180,25 +1179,28 @@ extension CombineFeatureTests {
 		await store.send(.reshuffleButtonTapped)?.value
 		await store.receive(\.deckReshuffled, timeout: .seconds(1)) {
 			$0.drawToken = 2
-			// Emptied by the reshuffle, then holding the one card it dealt straight afterwards.
-			$0.dealt = store.dealt
+			// The whole pool, put back by the delete this action follows, less nothing: the card
+			// it deals is taken out by the insert that has not run yet.
 			$0.result = store.result
 			$0.pool = pool
 		}
 		var dealt = [try #require(store.result?.item)]
+		try await settle(store)
 
 		// Then right through to the last card. Which card each draw lands on is the generator's
-		// business, and so is whether the row that removes it has landed by the time the store is
-		// asked — both are read from it rather than written down. The claims are the two
+		// business and is read from the store rather than written down. The claims are the two
 		// underneath: no card comes out twice, and the pool is always the deck minus what has
 		// been dealt.
+		//
+		// **Each draw's task is awaited before the next tap**, because the write and the reload
+		// that follows it are what make the pool authoritative and the feature refuses a tap
+		// arriving before they finish (ADR-0024).
 		for draw in 2...pool.count {
-			store.send(.againButtonTapped) {
+			await store.send(.againButtonTapped) {
 				$0.drawToken = draw + 1
-				$0.dealt = store.dealt
 				$0.result = store.result
 				$0.pool = store.pool
-			}
+			}?.value
 			let card = try #require(store.result?.item)
 			#expect(!dealt.contains(card))
 			dealt.append(card)
@@ -1213,11 +1215,10 @@ extension CombineFeatureTests {
 		#expect(dealt.map(\.title).sorted() == ["Heat", "Pizza", "Pizza", "Sushi"])
 		#expect(try await Set(draws().map(\.itemID)) == Set(pool.map(\.id)))
 		// One row per card and no more. `comboDraws` is keyed on a surrogate id, so a card dealt
-		// twice would land a second row here rather than trip a constraint — which is what made
-		// the stale-pool window silent on this surface until the sheet started filtering against
-		// everything it had dealt.
+		// twice would land a second row here rather than trip a constraint — which is why this
+		// surface is where a stale pool went unnoticed, and why the count is asserted rather than
+		// left to the schema.
 		#expect(try await draws().count == pool.count)
-		#expect(store.dealt == Set(pool.map(\.id)))
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
 		store.send(.againButtonTapped) {
@@ -1250,7 +1251,6 @@ extension CombineFeatureTests {
 		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
 			RandomiseFeature()
 		} changes: {
-			$0.dealt = [pizza.id]
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
