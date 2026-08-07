@@ -29,6 +29,11 @@ custom_rules:
   # - The required expression is matched exactly, not merely the presence of a `bundle:`
   #   label. `bundle: .main` and `bundle: nil` are precisely the wiring this exists to
   #   catch, and both satisfy a laxer check while resolving against the wrong bundle.
+  # - The optional `localized:` label lets the pattern reach `AttributedString(localized:)`,
+  #   whose literal is not the first argument. That call site exists because a dialog title
+  #   is extracted as a plain string for `UIAlertController` and runs no morphology pass, so
+  #   a `Text` holding `^[…](inflect: true)` renders the markup — it is the only way to get
+  #   automatic grammar agreement into an alert or a dialog, and so is not a one-off.
   # - `#*` around the literal catches raw strings, so `Text(#"…"#)` is not a way past.
   # - The lookahead steps over one level of balanced parentheses, so an argument like
   #   `tableName: table()` between the literal and `bundle:` does not make a correct call
@@ -42,7 +47,7 @@ custom_rules:
   # anyone makes.
   localised_string_needs_bundle:
     name: "Localised string needs a bundle"
-    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|alert|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*#*"(?:[^"\\]|\\.)*"#*(?!(?:[^()]|\([^()]*\))*bundle:\s*#bundle\b)'
+    regex: '\b(?:accessibilityLabel|AccessibilityNotification\.Announcement|accessibilityValue|alert|AttributedString|Button|confirmationDialog|Label|navigationTitle|Picker|Section|Text|Toggle)\(\s*(?:localized:\s*)?#*"(?:[^"\\]|\\.)*"#*(?!(?:[^()]|\([^()]*\))*bundle:\s*#bundle\b)'
     excluded_match_kinds:
       - comment
       - doccomment

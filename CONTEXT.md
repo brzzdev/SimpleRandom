@@ -199,7 +199,7 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 | --- | --- | --- |
 | `Models` | SQLiteData | The `@Table` types — `List`, `Item`, `ListDraw`, `Combo`, `ComboList`, `ComboDraw` — plus `DrawMode`, `DrawScope`, `Theme` and `String.trimmedForStorage`, the trimming both editors enforce |
 | `Database` | `Models`, SQLiteData | `migrator`, `appDatabase()`, `inMemory()`, the `SyncEngine` factory and its `SyncEngineDelegate` |
-| `Preferences` | `Models` | The two `@Shared(.appStorage)` keys: `theme` and `hasCompletedFirstFetch` |
+| `Preferences` | `Models`, Sharing | The two `@Shared(.appStorage)` keys: `theme` and `hasCompletedFirstFetch` |
 | `Acknowledgements` | ComposableArchitecture2 | `Licenses.generated.swift`, the licence list and the licence detail screen |
 | `Components` | `Models`, ComposableArchitecture2 | The views both tabs render — `EmojiField`, the index row, the pinned Randomise bar, the primary capsule button |
 | `RandomiseFeature` | `Components`, `Database`, `Models`, ComposableArchitecture2 | The randomise sheet and the whole draw |
@@ -208,7 +208,7 @@ A Tuist `Project.swift` generating a thin `SimpleRandom` app target (`dev.brzz.S
 | `CombineFeature` | `Components`, `Database`, `ListDetailFeature`, `Models`, `Preferences`, `RandomiseFeature`, ComposableArchitecture2 | The Combine index and `ComboDetail` |
 | `SettingsFeature` | `Acknowledgements`, `BrzzUtils`, `Database`, `Models`, `Preferences`, ComposableArchitecture2 | The Settings form and `Logs/` |
 | `AppFeature` | `CombineFeature`, `ListsFeature`, `SettingsFeature`, ComposableArchitecture2 | The root `@Feature` and the `TabView` |
-| `App` | `AppFeature`, `Database`, `Preferences`, ComposableArchitecture2 | `SimpleRandomApp`, `prepareDependencies` at launch, store creation, `preferredColorScheme` |
+| `App` | `AppFeature`, `Database`, `Models`, `Preferences`, ComposableArchitecture2, Sharing | `SimpleRandomApp`, `prepareDependencies` at launch, store creation, `preferredColorScheme` |
 
 Twelve targets. `ListDetailFeature` is extracted for the same reason `RandomiseFeature` is: both tabs present it. A Combo's member row pushes the *real* List detail, not a copy or a read-only preview, so the screen cannot live inside `ListsFeature` without `CombineFeature` importing the whole Lists index to reach it. The two tabs stay peers, neither depending on the other.
 
@@ -216,7 +216,7 @@ Twelve targets. `ListDetailFeature` is extracted for the same reason `RandomiseF
 
 Four test targets, chosen by risk rather than by symmetry: `DatabaseTests`, `RandomiseFeatureTests`, `ListsFeatureTests` and `CombineFeatureTests`. `Models`, `Preferences`, `Acknowledgements`, `Components`, `ListDetailFeature`, `SettingsFeature`, `AppFeature` and `App` carry no tests — `Delete All Lists` is covered as a cascade case in `DatabaseTests`, and `ListDetail`'s behaviour is exercised through `ListsFeatureTests`. `CombineFeature` does not depend on `ListsFeature`: its List checklist reads `Models.List` through its own `@FetchAll`.
 
-Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies` and `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin). The last is named only so `ListsFeature` and `CombineFeature` may import `SwiftUINavigation` for `alert(item:)`, whose single-optional form SwiftUI has no equivalent of — both indexes raise a delete confirmation off one optional child state; TCA26 already brings the package, so the resolved graph is unchanged. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
+Package dependencies are `BrzzUtils` (`branch: "tca26"`), `TCA26` (`branch: "main"`, `traits: ["Dependencies"]`), `sqlite-data`, `swift-dependencies`, `swift-navigation` (`branch: "relax-sendable"`, matching TCA26's own pin) and `swift-sharing`. The last two are named only because targets import them directly. `swift-navigation` is so `ListsFeature`, `CombineFeature` and `SettingsFeature` may import `SwiftUINavigation` for `alert(item:)` and `confirmationDialog(item:)`, whose single-optional forms SwiftUI has no equivalent of — all three raise a delete confirmation off one optional child state. `swift-sharing` is so `Preferences` may declare the `theme` key — in its *public* API — and `App` may read it. Both packages arrive transitively through TCA26 and SQLiteData already, so the resolved graph is unchanged in each case; the entries declare dependencies the app was building against anyway. Every target gets the house upcoming-feature set — `ExistentialAny`, `ImmutableWeakCaptures`, `InferIsolatedConformances`, `InternalImportsByDefault`, `MemberImportVisibility`, `NonisolatedNonsendingByDefault` — applied by a loop at the foot of the manifest, with `.treatAllWarnings(as: .error)` behind `#if compiler(>=6.4)`. `InternalImportsByDefault` means every import carries an explicit `public` or `internal`.
 
 ### Composition
 
@@ -444,7 +444,9 @@ A missing `bundle: #bundle` is **invisible in v1**. The lookup misses, SwiftUI f
 
 A SwiftLint rule therefore guards the call sites at write time. The enumerated list is the decision and lives here; the rule itself is tooling, configured by convention:
 
-`accessibilityLabel`, `AccessibilityNotification.Announcement`, `accessibilityValue`, `alert`, `Button`, `confirmationDialog`, `Label`, `navigationTitle`, `Picker`, `Section`, `Text`, `Toggle`.
+`accessibilityLabel`, `AccessibilityNotification.Announcement`, `accessibilityValue`, `alert`, `AttributedString`, `Button`, `confirmationDialog`, `Label`, `navigationTitle`, `Picker`, `Section`, `Text`, `Toggle`.
+
+`AttributedString(localized:bundle:)` is on the list because **an alert or dialog title runs no morphology pass.** Its `Text` is extracted as a plain string for `UIAlertController`, so a count written `^[%lld lists](inflect: true)` reaches the screen as that literal markup. Resolving it through an `AttributedString` first is the only way to get automatic grammar agreement into one — which makes it the shape every counted alert and dialog in the app has to take, not a one-off. It is also the one entry whose literal is not the first argument, so the pattern steps over a `localized:` label.
 
 Reaching past `Text` is the point: `Text` is a minority of this app's strings, and **Accessibility**'s announcements — whose breakage is the hardest of all to notice, since they are silent either way — are not `Text` at all.
 
