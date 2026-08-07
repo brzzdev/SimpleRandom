@@ -6,17 +6,20 @@
 import Foundation
 
 // Regenerates `Sources/Acknowledgements/Licenses.generated.swift` from `Package.resolved` and
-// the checkouts SwiftPM has already made under `.build/checkouts`. Run it with `just licenses`;
-// the app never runs it, and the output is committed.
+// the checkouts SwiftPM has already made under `.build/checkouts`. Run it with `just licences`;
+// the app never runs it, and the output is committed. `.github/workflows/licences.yml` runs it
+// weekly and opens a PR, so the screen catches up without anyone having to remember.
 //
 // **The whole transitive graph is credited, test-only dependencies included.** `Package.resolved`
 // is the list of everything this repo pins, and a licence that only applies to code shipped in
 // the binary is a distinction this screen cannot make and nobody reading it wants.
 //
-// **It fails rather than guesses.** A package with no discoverable licence file, or with one this
-// script cannot classify, stops the run and names itself. Shipping a package as `Unknown` — or
-// worse, quietly dropping it — is the failure this screen exists to prevent, and it would be
-// invisible in a diff of an already-long generated file.
+// **It fails rather than guesses**, and every guess it could make is a failure instead: a missing
+// checkout, no licence file and no stated terms, terms it cannot classify, terms it can classify
+// two ways, a package that has both a file and a stated entry, or a body carrying a sequence the
+// generated literal cannot hold verbatim. Shipping a package as `Unknown` — or worse, quietly
+// dropping it, or crediting one licence for another — is the failure this screen exists to
+// prevent, and it would be invisible in a diff of an already-long generated file.
 
 // MARK: - Package.resolved
 
@@ -53,26 +56,55 @@ let statedTerms: [String: (type: String, text: String)] = [
 	"TCA26": (type: "All rights reserved", text: "© 2026 Point-Free, Inc. All rights reserved."),
 ]
 
-/// Reads as SPDX where there is an identifier to read as, because that is the name people
-/// searching for a package's terms already know.
+/// Every licence this script recognises in a body, read as SPDX where there is an identifier to
+/// read as — that is the name people searching for a package's terms already know.
 ///
 /// Matched on the text rather than on the file name: the file is called `LICENSE`, `LICENCE` or
 /// `LICENSE.txt` depending on the author, and none of those spellings says what is in it.
-func licenceType(of text: String) -> String? {
+///
+/// **Every recogniser is run, and the caller demands exactly one hit.** Returning at the first
+/// match would read a dual-licensed body — a file offering Apache-2.0 *or* MIT is an ordinary
+/// thing to ship — as whichever recogniser happened to be written first, and credit terms the
+/// package never picked. Two hits is not a licence this script knows; it is a licence this script
+/// cannot choose between, and that is the caller's to refuse.
+///
+/// **Recognising is not the same as verifying.** These are the hallmarks of each licence, not a
+/// diff against its canonical text, so a body that carries them *and something else* is
+/// recognised by its hallmarks. The MIT case below says what that costs.
+func licenceTypes(in text: String) -> [String] {
+	var types: [String] = []
+
 	if text.contains("Apache License"), text.contains("Version 2.0") {
 		// Both Apache-licensed pins here are Swift-project repositories, which append the
 		// exception rather than shipping stock Apache-2.0. Naming it matters: the exception is
 		// the clause that makes linking the runtime into a closed binary unremarkable.
-		text.range(of: "Runtime Library Exception", options: .caseInsensitive) != nil
-			? "Apache-2.0 with Runtime Library Exception"
-			: "Apache-2.0"
-	} else if text.contains("MIT License") || text.contains("Permission is hereby granted, free of charge") {
-		// GRDB.swift's licence opens on its copyright line rather than on a title, so the grant
-		// sentence is what identifies it. It is the exact wording of the MIT grant.
-		"MIT"
-	} else {
-		nil
+		types.append(
+			text.range(of: "Runtime Library Exception", options: .caseInsensitive) != nil
+				? "Apache-2.0 with Runtime Library Exception"
+				: "Apache-2.0"
+		)
 	}
+
+	// Three hallmarks rather than the grant sentence alone. GRDB.swift's licence opens on its
+	// copyright line rather than on a title, so a title cannot be required; but the grant sentence
+	// on its own is shared by every MIT derivative, and matching on it credits them all as MIT.
+	//
+	// **The residual is named rather than papered over.** MIT derivatives exist that carry all
+	// three hallmarks and add a clause — the JSON licence's "Good, not Evil" is the one people
+	// meet — and this check would call those MIT. A blocklist of known extra clauses was rejected:
+	// it cannot be complete, and a list that looks authoritative while missing the next derivative
+	// is the same overclaim as matching on one sentence. What is actually promised here is
+	// narrower than "this is MIT": it is "this carries MIT's hallmarks and no other licence's".
+	let mitHallmarks = [
+		"Permission is hereby granted, free of charge",
+		"without restriction, including without limitation the rights",
+		"THE SOFTWARE IS PROVIDED \"AS IS\"",
+	]
+	if mitHallmarks.allSatisfy(text.contains) {
+		types.append("MIT")
+	}
+
+	return types
 }
 
 /// The licence file in a checkout, whichever of the six spellings the author used.
@@ -94,6 +126,25 @@ func licenceFile(in checkout: URL) -> URL? {
 }
 
 // MARK: - Emitting
+
+/// What in a licence body would stop `literal(_:indent:)` producing verbatim text, named so the
+/// failure can say which one it was.
+///
+/// **`#"""` suppresses escapes but does not disable them.** It raises the bar to one `#`, so
+/// `\#(…)` still interpolates and `\#n` still escapes. A body containing `\#(` therefore either
+/// fails to compile — after this script has reported success — or, worse, evaluates and silently
+/// alters text that is supposed to be reproduced exactly. Rejecting the whole `\#` introducer
+/// rather than just `\#(` is deliberate: every escape at this delimiter depth starts with it, and
+/// a licence has no reason to contain the sequence at all.
+///
+/// The fix, should a licence ever contain one of these, is another `#` on both delimiters — a
+/// decision to take deliberately, rather than one to discover from a compile error in a
+/// nine-hundred-line generated file.
+func rawLiteralHazard(in text: String) -> String? {
+	if text.contains("\"\"\"#") { return "the raw string terminator \"\"\"#" }
+	if text.contains("\\#") { return "the raw string escape introducer \\#" }
+	return nil
+}
 
 /// One licence, as the generated file writes it.
 struct Entry {
@@ -171,31 +222,43 @@ for pin in resolved.pins {
 	// repository that had nothing to read: once the package ships a licence file that reading is
 	// stale, and silently preferring either one is how a screen ends up stating terms the package
 	// has since replaced.
+	let credit: (text: String, type: String)
 	switch (licenceFile(in: checkout), statedTerms[name]) {
 	case (let file?, nil):
 		let text = try String(contentsOf: file, encoding: .utf8)
-		guard let type = licenceType(of: text) else {
-			failures.append("\(name): \(file.lastPathComponent) matches no licence this script knows")
-			break
+		let types = licenceTypes(in: text)
+		guard types.count == 1, let type = types.first else {
+			failures.append(
+				types.isEmpty
+					? "\(name): \(file.lastPathComponent) matches no licence this script knows"
+					: "\(name): \(file.lastPathComponent) matches \(types.joined(separator: " and ")) — say which one applies"
+			)
+			continue
 		}
-		// The one sequence that would close the raw literal early. No licence contains it, and if
-		// one ever does the fix is another `#` on the delimiters — which is a decision, not
-		// something to discover from a compile error in a nine-hundred-line generated file.
-		guard !text.contains("\"\"\"#") else {
-			failures.append("\(name): \(file.lastPathComponent) contains the raw string delimiter `\"\"\"#`")
-			break
-		}
-		entries.append(Entry(name: name, text: text, type: type, version: pin.state.version))
+		credit = (text, type)
 
 	case (nil, let stated?):
-		entries.append(Entry(name: name, text: stated.text, type: stated.type, version: pin.state.version))
+		credit = (stated.text, stated.type)
 
 	case (nil, nil):
 		failures.append("\(name): no licence file in \(checkout.path), and no stated terms for it in this script")
+		continue
 
 	case (let file?, _?):
 		failures.append("\(name): now ships \(file.lastPathComponent) — delete its `statedTerms` entry")
+		continue
 	}
+
+	// **On the one path both sources reach**, so a hand-written entry is held to exactly what a
+	// discovered file is. Validating inside the branch above let `statedTerms` past unchecked,
+	// which would have made the generator report success while emitting Swift that does not
+	// compile — the fail-fast promise failing quietly, which is the worst way for it to fail.
+	if let hazard = rawLiteralHazard(in: credit.text) {
+		failures.append("\(name): its licence text contains \(hazard)")
+		continue
+	}
+
+	entries.append(Entry(name: name, text: credit.text, type: credit.type, version: pin.state.version))
 }
 
 guard failures.isEmpty else {
@@ -227,7 +290,7 @@ let output = """
 	// Copyright © 2026 brzzdev
 	// SPDX-License-Identifier: AGPL-3.0-or-later
 	//
-	// Generated by `just licenses` from `Package.resolved`. Do not edit by hand.
+	// Generated by `just licences` from `Package.resolved`. Do not edit by hand.
 	//
 
 	/// Every package this app pins, and the terms it is used under.

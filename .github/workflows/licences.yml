@@ -1,0 +1,74 @@
+name: Licences
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC — catches `Licenses.generated.swift` up with whatever moved in the
+    # resolved graph over the past week. Nothing gates a build on the file being current, and
+    # nothing should: forgetting `just licences` after a re-pin is the expected failure, not a
+    # thing to punish a build for. This is the mechanism that makes forgetting harmless.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: licences
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Update acknowledgements licences
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # `brew install` rather than SimpleTrackerForAniList's `brew bundle`, because this repo has
+      # no Brewfile. `just` is all this job needs — the recipe runs the generator through the same
+      # two commands a human would, so the workflow cannot drift from what regeneration means.
+      # No SPM authentication step either: every dependency here is public (`BrzzUtils` arrives
+      # with #28, and this will need one then).
+      - name: Install tools
+        run: brew install just
+
+      - name: Regenerate licences
+        run: just licences
+
+      # A GitHub App token rather than GITHUB_TOKEN, matching SimpleTrackerForAniList. Neither of
+      # the reasons that repo needs one applies here *yet* — this repo has no ruleset requiring
+      # signed commits, and no CI workflow that a GITHUB_TOKEN-authored PR would fail to trigger —
+      # so this is consistency across the two repos bought ahead of need, deliberately.
+      #
+      # **It needs `LICENCES_APP_ID` and `LICENCES_APP_PRIVATE_KEY` on this repo.** They are set
+      # on SimpleTrackerForAniList rather than at the org, so until they are added here the job
+      # fails on this step. The app needs `contents: write` + `pull-requests: write`.
+      - name: Mint app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.LICENCES_APP_ID }}
+          private-key: ${{ secrets.LICENCES_APP_PRIVATE_KEY }}
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          # The generated file alone. `swift package resolve` honours the committed pins rather
+          # than moving them, so `Package.resolved` should not change — and if it ever does, that
+          # is a dependency bump wanting its own PR, not a passenger on this one.
+          add-paths: Sources/Acknowledgements/Licenses.generated.swift
+          branch: chore/update-licences
+          commit-message: "chore(acknowledgements): update third-party licences"
+          # Commits through the GitHub API so the commit lands signed as the app's bot user.
+          sign-commits: true
+          title: "chore(acknowledgements): update third-party licences"
+          body: |
+            Automated weekly regeneration of `Licenses.generated.swift` from the resolved
+            Swift package graph on `main`. No-op weeks open no PR.

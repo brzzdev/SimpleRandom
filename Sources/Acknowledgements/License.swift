@@ -5,7 +5,7 @@
 
 /// One third-party package and the terms it is used under.
 ///
-/// The values are written by `tools/generate-licenses.swift` into `Licenses.generated.swift`;
+/// The values are written by `scripts/generate-licences.swift` into `Licenses.generated.swift`;
 /// the type lives here so it is linted, documented and reviewable like any other, and so the
 /// generated file stays pure data.
 ///

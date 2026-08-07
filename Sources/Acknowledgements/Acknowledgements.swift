@@ -13,7 +13,7 @@ public import ComposableArchitecture2
 /// licence is not surfaced.
 ///
 /// **It reads nothing and writes nothing.** The list is `Licenses.all`, generated from the full
-/// transitive `Package.resolved` graph by `tools/generate-licenses.swift` and committed — the
+/// transitive `Package.resolved` graph by `scripts/generate-licences.swift` and committed — the
 /// runtime never runs the generator, and there is no database, no dependency and no effect
 /// anywhere on this screen.
 @Feature
