@@ -35,8 +35,14 @@ public struct SettingsFeature {
 	///
 	/// Rows arriving in that window therefore survive, and the next tap counts them.
 	///
-	/// `itemCount` is the exception and stays a count: Items are not deleted directly but
-	/// cascade from the Lists named here, so there is nothing to name.
+	/// **`itemCount` is the exception, and is a magnitude rather than a promise.** Items are
+	/// not named at all — an Item hangs off a List that is — so one arriving into an
+	/// already-condemned List between the counting and the deleting goes with it, and the
+	/// dialog will have said one fewer. That is the ordinary meaning of agreeing to delete a
+	/// List, and `DatabaseTests` pins it so it reads as a decision rather than a gap. The
+	/// alternative, re-presenting the dialog whenever the count moved underneath, buys a
+	/// literal number with a confirmation that can bounce indefinitely while another device
+	/// is writing.
 	@Feature
 	public struct ConfirmDeleteAll: Prompt {
 		public struct State {

@@ -130,6 +130,53 @@ extension DatabaseTests {
 		}
 
 		@Test
+		func anItemArrivingIntoACountedListGoesWithItHoweverTheDialogCountedIt() async throws {
+			@Dependency(\.defaultDatabase) var database
+
+			// One List, counted with one Item in it.
+			try await database.write { db in
+				try db.seed {
+					Models.List(id: UUID(-1), createdAt: .seed, name: "Lunch")
+					Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
+				}
+			}
+			let countedLists = [UUID(-1)]
+
+			// A second Item lands in that same List after the dialog counted it — a sync insert
+			// arriving while the question is on screen. The dialog said one Item; there are now
+			// two, and the confirmation cannot be narrowed to exclude the second.
+			try await database.write { db in
+				try db.seed {
+					Item(id: UUID(-2), createdAt: .seed, listID: UUID(-1), title: "Ramen")
+				}
+			}
+
+			try await database.write { db in
+				try Models.List.where { $0.id.in(countedLists) }.delete().execute(db)
+			}
+
+			// **Both go, and that is the rule rather than a gap.** The Lists and Combos named by
+			// the confirmation are exact — nothing outside them is touched — but an Item is not
+			// named, it hangs off a List that is. Agreeing to delete a List is agreeing to
+			// delete what is in it, so the Item count states how much is at stake at the moment
+			// of asking rather than promising a number the cascade will match.
+			//
+			// The alternative was re-presenting the dialog whenever the count moved underneath,
+			// which holds the number literally at the cost of a confirmation that can bounce
+			// forever while another device is writing.
+			#expect(
+				try await Snapshot(database) == Snapshot(
+					comboDraws: [],
+					comboLists: [],
+					combos: [],
+					items: [],
+					listDraws: [],
+					lists: [],
+				)
+			)
+		}
+
+		@Test
 		func deletingAComboKeepsTheListsInIt() async throws {
 			@Dependency(\.defaultDatabase) var database
 

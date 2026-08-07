@@ -342,6 +342,8 @@ Six rows in four sections, destructive last, with **no `#if DEBUG` section anywh
 
 **It deletes the rows it counted, by id, in one transaction** — not "every List" evaluated whenever the write lands. The counting and the deleting are separate moments, and a row arriving between them, most plausibly from sync, would otherwise be swept up by a question that never mentioned it. Such a row survives, and the next tap counts it.
 
+**That exactness is a promise about Lists and Combos, not about Items.** Those two are named by id; an Item is not named at all, it hangs off a List that is. So an Item arriving into an already-condemned List between the counting and the deleting goes with it, and the dialog will have said one fewer. This is the ordinary meaning of **Ownership** — agreeing to delete a List is agreeing to delete what is in it — and the Item count therefore states how much is at stake at the moment of asking rather than promising a number the cascade will match. Rejected: re-presenting the dialog whenever the count moved underneath, which holds the number literally at the cost of a confirmation that can bounce indefinitely while another device is writing, on an action the user has already deliberately chosen. Pinned by a case in `DatabaseTests` so the behaviour is a decision rather than a gap.
+
 **Deliberately absent from v1**, so a later addition argues against a decision rather than slipping in: an iCloud sync toggle, a haptics toggle, randomise preferences, rate/feedback/support links, export/import/share, a default-list or startup-tab preference, an app accent colour, and the v2 animation toggle.
 
 ## Accessibility
