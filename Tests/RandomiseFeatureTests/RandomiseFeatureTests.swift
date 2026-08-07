@@ -475,9 +475,12 @@ extension RandomiseFeatureTests {
 		await store.send(.againButtonTapped) {
 			$0.drawToken = 3
 			$0.result = .item(pizza)
-			// The refilled pool, compared here: the deal this draw starts empties it again, but
-			// only once the task below has run.
-			$0.pool = pool
+			// Read back rather than written down. This draw refills the pool and then empties it
+			// again from its own task, and which side of that the comparison lands on is a race —
+			// pinning it to the full deck passes alone and fails under load. The claims worth
+			// making are the forced pick above and the two below, none of which are timing's
+			// business.
+			$0.pool = store.pool
 		}?.value
 		#expect(store.pool.isEmpty)
 		#expect(try await draws() == [pizza.id])

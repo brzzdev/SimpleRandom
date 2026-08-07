@@ -309,7 +309,7 @@ public struct RandomiseFeature {
 		// tracks rather than cancels, so this sitting alongside a Reshuffle on the same id is
 		// intended: what the guards ask is whether *any* Deck write is outstanding.
 		store.addTask(id: deckWrite) {
-			await withErrorReporting {
+			let inserted: Void? = await withErrorReporting {
 				try await database.write { db in
 					// One row per dealt Item on both paths — the same mechanism in two tables,
 					// because an Item belongs to exactly one List and to any number of Combos
@@ -325,12 +325,46 @@ public struct RandomiseFeature {
 						try ListDraw.insert { ListDraw(itemID: item.id, createdAt: now) }.execute(db)
 					}
 				}
-				// The pool is a live query, and the observation that takes the dealt Item out of
-				// it arrives on its own schedule. Waiting for it here is what stops the next draw
-				// seeing a card that has already gone.
-				try await pool.load()
 			}
+			// **An insert that failed spent nothing**, so there is nothing for the pool to catch
+			// up with — the card is still in the deck and the pool already says so, because it
+			// never changed. Told apart from the case below rather than sharing its error
+			// handling: only one of the two leaves the pool behind the database.
+			guard inserted != nil else { return }
+			// Discarded: there is nothing left to refuse. The Reshuffle below has a draw it can
+			// withhold when the pool never caught up; this task is the deal, and the card is
+			// already on screen.
+			await reload(pool)
 		}
+	}
+
+	/// Makes ``State/pool`` reflect a Deck write that has just committed, and says whether it
+	/// managed to.
+	///
+	/// **Awaited before the task holding ``deckWrite`` ends, which is the whole point.** The
+	/// guard is released when that task ends, so ending it over a pool that has not caught up
+	/// hands the next draw a pool still offering a card the database has already recorded as
+	/// dealt — the one ordering that survives serialising the writes. A commit is not finished
+	/// until the pool shows it.
+	///
+	/// Retried, because the realistic failure is transient: the app opens a `DatabasePool` and
+	/// the sync engine writes to it in the background (ADR-0002), so a read can lose a race it
+	/// would win a moment later. Each attempt reports.
+	///
+	/// **Bounded, and therefore not a guarantee.** A read that keeps failing will not start
+	/// working because a sheet wants it to, and the alternative to giving up is holding both
+	/// buttons dead for the life of the sheet. When it does give up, the live observation
+	/// behind ``State/pool`` is the last line of defence and that draw degrades to racing it —
+	/// the residual ADR-0024 records rather than claims to have closed.
+	@discardableResult
+	private func reload(_ pool: FetchAll<Item>) async -> Bool {
+		for _ in 1...3 {
+			// `Void?` is spelled out for the reason the two writes give: the closure returns
+			// nothing, and an inferred `()?` does not resolve the overload.
+			let loaded: Void? = await withErrorReporting { try await pool.load() }
+			guard loaded == nil else { return true }
+		}
+		return false
 	}
 
 	/// Puts the whole deck back, then deals from it.
@@ -348,7 +382,7 @@ public struct RandomiseFeature {
 		store.addTask(id: deckWrite) {
 			// `Void?` is spelled out because the closure returns nothing, and an inferred `()?`
 			// is a warning.
-			let reshuffled: Void? = await withErrorReporting {
+			let deleted: Void? = await withErrorReporting {
 				try await database.write { db in
 					// A hard delete of the whole set on either path, which is what makes Reshuffle
 					// the exact inverse of the rows the deals wrote (ADR-0006). A Combo puts back
@@ -359,13 +393,14 @@ public struct RandomiseFeature {
 					case .list(let list): try ListDraw.inList(list.id).delete().execute(db)
 					}
 				}
-				// The draw that follows has to see the deck put back rather than race the
-				// observation that refills the pool, so this asks for it and waits.
-				try await pool.load()
 			}
 			// A failed delete leaves the deck exactly as it was. Dealing anyway would land on
 			// exhaustion again and read as a dead button.
-			guard reshuffled != nil else { return }
+			//
+			// And the draw below has to see the deck put back rather than race the observation
+			// that refills the pool, so a delete the pool never caught up with deals nothing
+			// either — it would draw from the spent pool and land straight back on exhaustion.
+			guard deleted != nil, await reload(pool) else { return }
 			try store.send(.deckReshuffled)
 		}
 	}
