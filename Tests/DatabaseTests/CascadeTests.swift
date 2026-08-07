@@ -69,46 +69,62 @@ extension DatabaseTests {
 		}
 
 		@Test
-		func deletingAllListsLeavesTheCombosThatHeldThemEmpty() async throws {
+		func deletingTheCountedListsAndCombosTakesEverythingUnderThemAndNothingElse() async throws {
 			@Dependency(\.defaultDatabase) var database
 
-			// What Settings' `Delete All Lists` runs against: every List, both in a Combo, with
-			// a draw recorded on each surface so both draw tables have something to lose.
+			// What Settings' `Delete All Lists` runs against, plus a List and a Combo standing in
+			// for rows that arrived after the dialog counted — a sync insert, most plausibly. The
+			// gesture names ids rather than whole tables, so those two are not in what it deletes.
 			try await database.write { db in
 				try db.seed {
 					Models.List(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Lunch")
 					Models.List(id: UUID(-2), createdAt: .seed, name: "Films")
+					Models.List(id: UUID(-3), createdAt: .seed, name: "Arrived late")
 
 					Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
 					Item(id: UUID(-2), createdAt: .seed, listID: UUID(-2), title: "Alien")
+					Item(id: UUID(-3), createdAt: .seed, listID: UUID(-3), title: "Sushi")
 
 					ListDraw(itemID: UUID(-1), createdAt: .seed)
+					ListDraw(itemID: UUID(-3), createdAt: .seed)
 
 					Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
+					Combo(id: UUID(-2), createdAt: .seed, name: "Also arrived late")
+
 					ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
 					ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
+					ComboList(id: UUID(-3), comboID: UUID(-2), createdAt: .seed, listID: UUID(-3))
 
 					ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
+					ComboDraw(id: UUID(-2), comboID: UUID(-2), createdAt: .seed, itemID: UUID(-3))
 				}
 			}
 
+			// The two statements the feature runs, in the one transaction it runs them in.
+			let countedLists = [UUID(-1), UUID(-2)]
+			let countedCombos = [UUID(-1)]
 			try await database.write { db in
-				try Models.List.delete().execute(db)
+				try Models.List.where { $0.id.in(countedLists) }.delete().execute(db)
+				try Combo.where { $0.id.in(countedCombos) }.delete().execute(db)
 			}
 
-			// The gesture is `Delete All Lists`, not `Delete Everything`, and its blast radius is
-			// one List's repeated: Items, memberships and both kinds of draw row go with them.
-			// The Combo stays, holding nothing — a Combo is an arrangement of Lists rather than
-			// an owner of them, and one losing every member is the same silent shrink as one
-			// losing a member.
+			// **Combos go with the Lists.** This is the one gesture that gets rid of everything,
+			// and it is what separates it from deleting Lists one at a time — there a Combo stays
+			// and silently shrinks, here it goes. Items, memberships and both kinds of draw row
+			// follow whichever side owned them.
+			//
+			// **And nothing it did not count is touched.** The late List keeps its Item and its
+			// draw, the late Combo keeps its membership and its own draw — a row arriving between
+			// the counting and the deleting is not covered by the question that was asked, so the
+			// delete has to name rows rather than tables for this half to hold.
 			#expect(
 				try await Snapshot(database) == Snapshot(
-					comboDraws: [],
-					comboLists: [],
-					combos: [UUID(-1)],
-					items: [],
-					listDraws: [],
-					lists: [],
+					comboDraws: [UUID(-2)],
+					comboLists: [UUID(-3)],
+					combos: [UUID(-2)],
+					items: [UUID(-3)],
+					listDraws: [UUID(-3)],
+					lists: [UUID(-3)],
 				)
 			)
 		}

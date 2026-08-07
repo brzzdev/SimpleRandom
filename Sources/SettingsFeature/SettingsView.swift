@@ -95,8 +95,10 @@ public struct SettingsView: View {
 	/// Alone in an unheadered trailing section, because it is not one of a set of things you
 	/// might do — it is the thing you do once and cannot undo.
 	///
-	/// Disabled when there are no Lists: the dialog's whole safety mechanism is the counts it
-	/// states, and it has nothing to say when both are zero.
+	/// Disabled when there is nothing for it to take. `CONTEXT.md` says "no Lists", which was
+	/// written when Combos were outside the gesture; now that they are inside it, a Combo
+	/// outliving every List it was made from is a real state, and a button that refused to
+	/// clear it would be dimmed with something still to delete.
 	private var deleteAllLists: some View {
 		Section {
 			Button(role: .destructive) {
@@ -104,7 +106,7 @@ public struct SettingsView: View {
 			} label: {
 				Text("Delete All Lists", bundle: #bundle)
 			}
-			.disabled(store.listCount == 0)
+			.disabled(store.comboIDs.isEmpty && store.listIDs.isEmpty)
 		}
 		// The dialog states the real counts and the real blast radius. The specificity is
 		// the safety mechanism: a typed `DELETE` confirmation was rejected as a keyboard on
@@ -127,11 +129,11 @@ public struct SettingsView: View {
 			// rendered by SwiftUI — it is extracted as a plain string for
 			// `UIAlertController`, and that extraction runs no morphology pass, so a `Text`
 			// holding the key renders the literal `^[7 lists](inflect: true)`.
-			// `AttributedString(localized:bundle:)` runs the pass itself. The catalogue key
-			// is unchanged, and CONTEXT.md's enumerated call sites carry this one.
+			// `AttributedString(localized:bundle:)` runs the pass itself, and CONTEXT.md's
+			// enumerated call sites carry it.
 			Text(
 				AttributedString(
-					localized: "Delete all ^[\(deletion.listCount) lists](inflect: true) and ^[\(deletion.itemCount) items](inflect: true)?",
+					localized: "Delete all ^[\(deletion.listCount) lists](inflect: true), ^[\(deletion.itemCount) items](inflect: true) and ^[\(deletion.comboCount) combos](inflect: true)?",
 					bundle: #bundle,
 				)
 			)
