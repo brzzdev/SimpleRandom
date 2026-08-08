@@ -85,10 +85,11 @@ internal struct CombineFeatureTests {
 			)
 		}
 
-		// Nothing ticked yet, so the footer prompts rather than counting a pool of zero.
 		let options = try #require(await store.read { $0.destination?.editor?.options })
-		let emptyFooter = await store.read { $0.destination?.editor?.poolFooter }
-		expectNoDifference(emptyFooter, .prompt)
+
+		// Nothing ticked yet, so the footer prompts rather than counting a pool of zero.
+		let poolFooter = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(poolFooter, .prompt)
 
 		await store.modify {
 			$0.destination.modify(\.editor) {
@@ -104,8 +105,8 @@ internal struct CombineFeatureTests {
 		}
 		// The live footer, and the whole point of the one form: three Items across two Lists,
 		// counted before anything has been written.
-		let poolFooter = await store.read { $0.destination?.editor?.poolFooter }
-		expectNoDifference(poolFooter, .pool(count: 3))
+		let poolFooterAfterTicking = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(poolFooterAfterTicking, .pool(count: 3))
 
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
@@ -157,7 +158,8 @@ internal struct CombineFeatureTests {
 
 		// Membership gates nothing: zero member Lists is legal, and there is no "combining
 		// needs two Lists" rule — it would block building a Combo up one List at a time.
-		#expect(await store.read { $0.destination?.editor?.isSavable } == true)
+		let isSavable = try #require(await store.read { $0.destination?.editor?.isSavable })
+		#expect(isSavable)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		let comboID = try #require(try await combos().first?.id)
@@ -190,7 +192,8 @@ internal struct CombineFeatureTests {
 		// A name is trimmed and non-empty, so there is nothing here to save. The Save button
 		// is disabled on the same rule, and this is the reducer refusing anyway — the button
 		// is a courtesy, not the enforcement.
-		#expect(await store.read { $0.destination?.editor?.isSavable } == false)
+		let isSavable = try #require(await store.read { $0.destination?.editor?.isSavable })
+		#expect(isSavable == false)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The sheet stays up, holding what was typed, rather than dismissing on a save that
@@ -235,8 +238,8 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		let seededFooter = await store.read { $0.destination?.editor?.poolFooter }
-		expectNoDifference(seededFooter, .pool(count: 1))
+		let poolFooter = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(poolFooter, .pool(count: 1))
 
 		// Swap Lunch out for Films, and make it a Deck while we are here.
 		let options = try #require(await store.read { $0.destination?.editor?.options })
@@ -251,16 +254,16 @@ internal struct CombineFeatureTests {
 		}
 		let selectedListIDs = await store.read { $0.destination?.editor?.selectedListIDs }
 		expectNoDifference(selectedListIDs, [UUID(-2)])
-		let swappedFooter = await store.read { $0.destination?.editor?.poolFooter }
-		expectNoDifference(swappedFooter, .pool(count: 2))
+		let poolFooterAfterTheSwap = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(poolFooterAfterTheSwap, .pool(count: 2))
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The membership was replaced rather than the Combo, and the Lists themselves are
 		// untouched: a Combo points at them and does not own them.
 		let rows = try await memberships()
 		expectNoDifference(rows.map(\.listID), [UUID(-2)])
-		let names = try await lists().map(\.name)
-		expectNoDifference(names, ["Lunch", "Films"])
+		let listNames = try await lists().map(\.name)
+		expectNoDifference(listNames, ["Lunch", "Films"])
 
 		try await reloadIndex(store)
 		await store.expect {
@@ -374,8 +377,13 @@ internal struct CombineFeatureTests {
 		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.name = "Movie night" }
 		}
-		#expect(await store.read { $0.destination?.editor?.ticked.isEmpty } == true)
-		#expect(await store.read { $0.destination?.editor?.unticked.isEmpty } == true)
+		let deltas = try #require(
+			await store.read { state in
+				state.destination?.editor.map { (ticked: $0.ticked, unticked: $0.unticked) }
+			}
+		)
+		#expect(deltas.ticked.isEmpty)
+		#expect(deltas.unticked.isEmpty)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// Films survives. Under a selection snapshot taken when the form opened, saving the
@@ -383,8 +391,8 @@ internal struct CombineFeatureTests {
 		// the database rather than the index, because it is the write that was wrong.
 		let listIDs = try await memberships().map(\.listID)
 		expectNoDifference(listIDs, [UUID(-1), UUID(-2)])
-		let names = try await combos().map(\.name)
-		expectNoDifference(names, ["Movie night"])
+		let comboNames = try await combos().map(\.name)
+		expectNoDifference(comboNames, ["Movie night"])
 
 		try await reloadIndex(store)
 		await store.expect {
@@ -654,8 +662,8 @@ internal struct CombineFeatureTests {
 			)
 		}
 		// Nothing has gone yet: raising the confirmation is the whole of what the swipe did.
-		let count = try await combos().count
-		expectNoDifference(count, 2)
+		let comboCount = try await combos().count
+		expectNoDifference(comboCount, 2)
 
 		// `Prompt` nils the destination out on the way through, so the alert's dismissal is
 		// the feature's own behaviour rather than SwiftUI's, replayed.
@@ -663,16 +671,16 @@ internal struct CombineFeatureTests {
 			$0.destination = nil
 		}?.value
 
-		let names = try await combos().map(\.name)
-		expectNoDifference(names, ["Weeknights"])
+		let comboNames = try await combos().map(\.name)
+		expectNoDifference(comboNames, ["Weeknights"])
 		// The memberships and the draw rows cascade away with the Combo — and the Lists in it
 		// are kept, which is exactly what the alert promised.
 		#expect(try await memberships().isEmpty)
 		#expect(try await draws().isEmpty)
 		let listNames = try await lists().map(\.name)
 		expectNoDifference(listNames, ["Lunch"])
-		let titles = try await items().map(\.title)
-		expectNoDifference(titles, ["Pizza"])
+		let itemTitles = try await items().map(\.title)
+		expectNoDifference(itemTitles, ["Pizza"])
 	}
 
 	@Test
@@ -701,8 +709,8 @@ internal struct CombineFeatureTests {
 		}
 
 		try await reloadIndex(store)
-		let shrunk = await store.summaries
-		expectNoDifference(shrunk, [.seeded(id: UUID(-1), itemCount: 1, listCount: 1)])
+		let summariesAfterTheDelete = await store.summaries
+		expectNoDifference(summariesAfterTheDelete, [.seeded(id: UUID(-1), itemCount: 1, listCount: 1)])
 		let listCount = await store.listCount
 		expectNoDifference(listCount, 1)
 	}
@@ -788,11 +796,18 @@ extension CombineFeatureTests {
 			)
 		}
 
-		let itemCount = await store.read { $0.detail?.itemCount }
-		expectNoDifference(itemCount, 3)
-		let randomiseCaption = await store.read { $0.detail?.randomiseCaption }
-		expectNoDifference(randomiseCaption, .pool(count: 3))
-		#expect(await store.read { $0.detail?.canRandomise } == true)
+		// All three read off the same detail, so they are projected in one pass and `#require`d
+		// once: a detail that is not there is a single failure saying so, rather than three
+		// saying a `nil` is not the number, the caption or the flag expected of it.
+		let projection = await store.read { state in
+			state.detail.map {
+				(itemCount: $0.itemCount, randomiseCaption: $0.randomiseCaption, canRandomise: $0.canRandomise)
+			}
+		}
+		let detail = try #require(projection)
+		expectNoDifference(detail.itemCount, 3)
+		expectNoDifference(detail.randomiseCaption, .pool(count: 3))
+		#expect(detail.canRandomise)
 	}
 
 	@Test
@@ -1245,8 +1260,8 @@ extension CombineFeatureTests {
 			dealt.append(card)
 
 			try await settle(store)
-			let remaining = await store.pool
-			expectNoDifference(remaining, pool.filter { !dealt.contains($0) })
+			let remainingPool = await store.pool
+			expectNoDifference(remainingPool, pool.filter { !dealt.contains($0) })
 		}
 
 		// The multiset of what came out *is* the pool, titles and all.
@@ -1259,8 +1274,8 @@ extension CombineFeatureTests {
 		// twice would land a second row here rather than trip a constraint — which is why this
 		// surface is where a stale pool went unnoticed, and why the count is asserted rather than
 		// left to the schema.
-		let rowCount = try await draws().count
-		expectNoDifference(rowCount, pool.count)
+		let drawCount = try await draws().count
+		expectNoDifference(drawCount, pool.count)
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
 		await store.send(.againButtonTapped) {
@@ -1408,8 +1423,8 @@ extension CombineFeatureTests {
 
 		try await reloadDraws(store)
 		#expect(await store.draws.isEmpty)
-		let reshuffledCaption = await store.randomiseCaption
-		expectNoDifference(reshuffledCaption, .deck(remaining: 2, total: 2))
+		let randomiseCaptionAfterTheReshuffle = await store.randomiseCaption
+		expectNoDifference(randomiseCaptionAfterTheReshuffle, .deck(remaining: 2, total: 2))
 		#expect(await store.isExhausted == false)
 	}
 
@@ -1549,9 +1564,9 @@ extension CombineFeatureTests {
 		//
 		// `Deck · 1 of 2 left`, not `0 of 2`: Heat is back in the pool and back in the deck.
 		try await reloadIndex(store)
-		let restored = await store.summaries
+		let summaries = await store.summaries
 		expectNoDifference(
-			restored,
+			summaries,
 			[
 				ComboSummary(combo: friday, dealtCount: 1, itemCount: 2, listCount: 2),
 				ComboSummary(combo: weeknights, dealtCount: 1, itemCount: 1, listCount: 1),
@@ -1674,13 +1689,9 @@ extension CombineFeatureTests {
 extension TestStoreActor {
 	/// The store's live value for a piece of state, read from inside a `changes` closure.
 	///
-	/// Those closures are synchronous, so `await store.result` is unavailable in one — and the
-	/// isolation is not merely assumed: `send` and `receive` are isolated to this store and call
-	/// the closure themselves, so it runs on this store's own executor.
-	///
-	/// Used only where the value is the generator's business rather than this suite's, exactly
-	/// as ``TestStore`` allowed the same read before #64. Every other field still travels
-	/// written down.
+	/// Declared here as well as in `RandomiseFeatureTests`, which states in full why the read is
+	/// sound and where it may be used. A test target has no shared support target to hold it,
+	/// and none is being added for two copies of four lines (ADR-0019).
 	nonisolated internal func actual<Value: Sendable>(
 		_ keyPath: sending KeyPath<State, Value>
 	) -> Value {
@@ -1689,19 +1700,10 @@ extension TestStoreActor {
 
 	/// A `Sendable` projection of state, read from off the store's actor.
 	///
-	/// A `Feature.State` is not itself `Sendable` — it holds `@FetchAll` queries — so it cannot
-	/// be lifted off the actor to be picked apart, and `store.destination?.editor` therefore no
-	/// longer type-checks the way it did under ``TestStore``. This runs the picking apart *on*
-	/// the actor and hands back only what crosses safely (#64).
+	/// Declared here as well as in `ListsFeatureTests`, which states in full why an
+	/// actor-isolated store needs it (#64), and for the same reason ``actual(_:)`` gives.
 	internal func read<Value: Sendable>(_ project: sending (State) -> Value) -> Value {
 		project(state)
-	}
-}
-
-extension TestStoreActor where Subject == ComboDetail {
-	/// Reloads a Combo detail's own draw rows, from off the store's actor.
-	internal func loadDraws() async throws {
-		try await state.$draws.load()
 	}
 }
 
@@ -1713,6 +1715,13 @@ extension TestStoreActor where Subject == CombineFeature {
 	internal func loadIndex() async throws {
 		try await state.$listCount.load()
 		try await state.$summaries.load()
+	}
+}
+
+extension TestStoreActor where Subject == ComboDetail {
+	/// Reloads a Combo detail's own draw rows, from off the store's actor.
+	internal func loadDraws() async throws {
+		try await state.$draws.load()
 	}
 }
 

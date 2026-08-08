@@ -109,7 +109,11 @@ internal struct ListDetailTests {
 		// A title is trimmed and non-empty, so there is nothing here to save. The Save button
 		// is disabled on the same rule, and this is the reducer refusing anyway — the button is
 		// a courtesy, not the enforcement.
-		let isSavable = await store.read { $0.destination?.editor?.isSavable }
+		// `#require`d rather than compared against `false` directly, so that a sheet that is not
+		// up at all fails as the missing editor it is rather than as a rule the editor broke.
+		// Every optional this suite reads a claim off is unwrapped the same way; a `!= nil` is
+		// the exception, because there the presence *is* the claim.
+		let isSavable = try #require(await store.read { $0.destination?.editor?.isSavable })
 		#expect(isSavable == false)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
@@ -366,9 +370,10 @@ internal struct ListDetailTests {
 		// Read rather than `expect`ed, for the reason ``deletingAnItemDoesNotAskFirst`` gives.
 		try await reloadIndex(store)
 		try await reloadDetailItems(store)
-		let counts = await store.summaries.map(\.itemCount)
-		expectNoDifference(counts, [0])
-		#expect(await store.read { $0.detail?.items.isEmpty } == true)
+		let itemCounts = await store.summaries.map(\.itemCount)
+		expectNoDifference(itemCounts, [0])
+		let detailItems = try #require(await store.read { $0.detail?.items })
+		#expect(detailItems.isEmpty)
 	}
 }
 
@@ -460,8 +465,8 @@ extension ListDetailTests {
 			try db.seed { Item(id: UUID(-2), createdAt: .later, listID: UUID(-1), title: "Ramen") }
 		}
 		try await reloadItems(store)
-		let refreshedTitles = await store.items.map(\.title)
-		expectNoDifference(refreshedTitles, ["Pizza", "Ramen"])
+		let titlesAfterAddingRamen = await store.items.map(\.title)
+		expectNoDifference(titlesAfterAddingRamen, ["Pizza", "Ramen"])
 		#expect(await store.isExhausted == false)
 		let remainingCount = await store.remainingCount
 		expectNoDifference(remainingCount, 1)
@@ -608,16 +613,6 @@ extension ListDetailTests {
 
 // MARK: - Reaching an actor-isolated store
 
-extension TestStoreActor where Subject == ListsFeature {
-	/// Reloads the Items of the detail pushed as this index's child, from off the store's actor.
-	///
-	/// Lives here rather than beside ``TestStoreActor/loadSummaries()`` because reaching
-	/// `$items` needs this file's `@testable import ListDetailFeature`.
-	internal func loadDetailItems() async throws {
-		try await state.detail?.$items.load()
-	}
-}
-
 extension TestStoreActor where Subject == ListDetail {
 	/// Reloads the Deck's draw rows, from off the store's actor. See
 	/// ``TestStoreActor/loadSummaries()`` for why these have to be isolated methods.
@@ -628,5 +623,15 @@ extension TestStoreActor where Subject == ListDetail {
 	/// Reloads the detail's Items, from off the store's actor.
 	internal func loadItems() async throws {
 		try await state.$items.load()
+	}
+}
+
+extension TestStoreActor where Subject == ListsFeature {
+	/// Reloads the Items of the detail pushed as this index's child, from off the store's actor.
+	///
+	/// Lives here rather than beside ``TestStoreActor/loadSummaries()`` because reaching
+	/// `$items` needs this file's `@testable import ListDetailFeature`.
+	internal func loadDetailItems() async throws {
+		try await state.detail?.$items.load()
 	}
 }

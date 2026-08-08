@@ -96,8 +96,8 @@ internal struct ListsFeatureTests {
 			}
 		}
 		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
-		let seeded = await store.summaries
-		expectNoDifference(seeded, [.seeded(id: UUID(-1), createdAt: .earlier, name: "Lunch")])
+		let summaries = await store.summaries
+		expectNoDifference(summaries, [.seeded(id: UUID(-1), createdAt: .earlier, name: "Lunch")])
 
 		await store.send(.newListButtonTapped) {
 			$0.destination = .editor(
@@ -139,7 +139,8 @@ internal struct ListsFeatureTests {
 		// A name is trimmed and non-empty, so there is nothing here to save. The Save button
 		// is disabled on the same rule, and this is the reducer refusing anyway — the button
 		// is a courtesy, not the enforcement.
-		#expect(await store.read { $0.destination?.editor?.isSavable } == false)
+		let isSavable = try #require(await store.read { $0.destination?.editor?.isSavable })
+		#expect(isSavable == false)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The sheet stays up, holding what was typed, rather than dismissing on a save that
@@ -186,8 +187,8 @@ internal struct ListsFeatureTests {
 		}
 		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
 		let summary = ListSummary.seeded(id: UUID(-1), itemCount: 1, name: "Lunch")
-		let seeded = await store.summaries
-		expectNoDifference(seeded, [summary])
+		let summaries = await store.summaries
+		expectNoDifference(summaries, [summary])
 
 		await store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
@@ -233,8 +234,8 @@ internal struct ListsFeatureTests {
 		}
 		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
 		let summary = ListSummary.seeded(id: UUID(-1), name: "Weekend walks")
-		let seeded = await store.summaries
-		expectNoDifference(seeded, [summary])
+		let summaries = await store.summaries
+		expectNoDifference(summaries, [summary])
 
 		// It goes with no confirmation at all — there is nothing in it to lose, and a
 		// confirmation on every delete is what teaches people to tap through them.
@@ -264,9 +265,9 @@ internal struct ListsFeatureTests {
 			itemCount: 2,
 			list: Models.List(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Films"),
 		)
-		let seeded = await store.summaries
+		let summaries = await store.summaries
 		expectNoDifference(
-			seeded,
+			summaries,
 			[
 				films,
 				.seeded(id: UUID(-2), createdAt: .later, itemCount: 1, name: "Lunch"),
@@ -283,8 +284,8 @@ internal struct ListsFeatureTests {
 			)
 		}
 		// Nothing has gone yet: raising the confirmation is the whole of what the swipe did.
-		let count = try await lists().count
-		expectNoDifference(count, 2)
+		let listCount = try await lists().count
+		expectNoDifference(listCount, 2)
 
 		// `Prompt` nils the destination out on the way through, so the alert's dismissal is
 		// the feature's own behaviour rather than SwiftUI's, replayed.
@@ -292,18 +293,18 @@ internal struct ListsFeatureTests {
 			$0.destination = nil
 		}?.value
 
-		let remaining = try await lists().map(\.name)
-		expectNoDifference(remaining, ["Lunch"])
+		let listNames = try await lists().map(\.name)
+		expectNoDifference(listNames, ["Lunch"])
 		// Deleting a List deletes its Items, and their draw rows with them. The other List's
 		// Item is untouched.
-		let titles = try await items().map(\.title)
-		expectNoDifference(titles, ["Pizza"])
+		let itemTitles = try await items().map(\.title)
+		expectNoDifference(itemTitles, ["Pizza"])
 		#expect(try await draws().isEmpty)
 
 		try await reloadIndex(store)
-		let summaries = await store.summaries
+		let summariesAfterTheDelete = await store.summaries
 		expectNoDifference(
-			summaries,
+			summariesAfterTheDelete,
 			[.seeded(id: UUID(-2), createdAt: .later, itemCount: 1, name: "Lunch")]
 		)
 	}

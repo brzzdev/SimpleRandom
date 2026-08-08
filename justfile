@@ -16,6 +16,10 @@ sim_os := env("IOS_SIM_OS", "latest")
 # why this belongs to every Xcode invocation rather than to CI.
 skip_macro_validation := "-skipMacroValidation"
 workspace := "SimpleRandom.xcworkspace"
+# Everything every xcodebuild invocation here shares, so that the action — `build`, `test`,
+# `test -only-testing:` — is the only thing a recipe has to spell out, and the three cannot
+# drift into building or testing different things.
+xcodebuild := "xcodebuild -workspace " + workspace + " -scheme " + scheme + " -destination '" + destination + "' " + skip_macro_validation
 
 # List available recipes
 default:
@@ -23,7 +27,7 @@ default:
 
 # Build the app and every module
 build: ensure-generated
-	xcodebuild -workspace {{ workspace }} -scheme {{ scheme }} -destination '{{ destination }}' {{ skip_macro_validation }} build | xcbeautify
+	{{ xcodebuild }} build | xcbeautify
 
 # Generate if the workspace is missing or older than the manifests that produce it.
 # Existence alone is the wrong test: adding a target or changing a build setting leaves a
@@ -57,12 +61,12 @@ lint:
 
 # Run the four test targets, via the test plan
 test: ensure-generated
-	xcodebuild -workspace {{ workspace }} -scheme {{ scheme }} -destination '{{ destination }}' {{ skip_macro_validation }} test | xcbeautify
+	{{ xcodebuild }} test | xcbeautify
 
 # Run one test target — `just test-one RandomiseFeatureTests`
 #
-# Exists because #58 is a flake, and a flake is measured by running one suite many times and
-# counting: `for i in $(seq 20); do just test-one RandomiseFeatureTests; done`. Without it that
+# A flake is measured by running one suite many times and counting:
+# `for i in $(seq 20); do just test-one RandomiseFeatureTests; done`. Without this recipe that
 # means reaching past `just` for xcodebuild, which this repo does not do.
 test-one target: ensure-generated
-	xcodebuild -workspace {{ workspace }} -scheme {{ scheme }} -destination '{{ destination }}' {{ skip_macro_validation }} test -only-testing:{{ target }} | xcbeautify
+	{{ xcodebuild }} test -only-testing:{{ target }} | xcbeautify

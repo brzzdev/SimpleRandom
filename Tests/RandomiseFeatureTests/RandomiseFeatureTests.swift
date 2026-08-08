@@ -344,8 +344,8 @@ extension RandomiseFeatureTests {
 		#expect(pool.contains(dealt))
 
 		try await settle(store)
-		let remaining = await store.pool
-		expectNoDifference(remaining, pool.filter { $0.id != dealt.id })
+		let remainingPool = await store.pool
+		expectNoDifference(remainingPool, pool.filter { $0.id != dealt.id })
 		// One row, for the card just dealt: Reshuffle put both of the old ones back.
 		let dealtIDs = try await draws()
 		expectNoDifference(dealtIDs, [dealt.id])
@@ -401,8 +401,8 @@ extension RandomiseFeatureTests {
 			dealt.append(card)
 
 			try await settle(store)
-			let remaining = await store.pool
-			expectNoDifference(remaining, pool.filter { !dealt.contains($0) })
+			let remainingPool = await store.pool
+			expectNoDifference(remainingPool, pool.filter { !dealt.contains($0) })
 		}
 
 		expectNoDifference(dealt.count, pool.count)
@@ -509,9 +509,10 @@ extension RandomiseFeatureTests {
 		// The report *is* the expected outcome here, which is what `withKnownIssue` says: the
 		// pick and the sheet are correct, and the database is the thing that failed.
 		// **The construction is inside the region, not just the settle.** The opening deal runs at
-		// mount, and its failure is reported before `TestStore.init` hands the store back — so a
-		// region covering only the wait below sees no issue and fails with "Known issue was not
-		// recorded". That is what forces the store to be declared first and assigned here.
+		// mount, and its failure is reported before the awaited `TestStoreActor.init` hands the
+		// store back — so a region covering only the wait below sees no issue and fails with
+		// "Known issue was not recorded". That is what forces the store to be declared first and
+		// assigned here.
 		var store: TestStoreActor<RandomiseFeature>!
 		await withKnownIssue {
 			store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(deck))) {
@@ -526,8 +527,8 @@ extension RandomiseFeatureTests {
 		// Nothing persisted, so nothing was spent: the pool still holds the card and the deck is
 		// exactly as full as its row count says it is.
 		#expect(try await draws().isEmpty)
-		let afterTheFailedDeal = await store.pool
-		expectNoDifference(afterTheFailedDeal, pool)
+		let poolAfterTheFailedDeal = await store.pool
+		expectNoDifference(poolAfterTheFailedDeal, pool)
 
 		// **And the card is still on offer.** This is the half that regressed under the local
 		// guard, which inserted into its own set before the write started and removed nothing on
@@ -542,8 +543,8 @@ extension RandomiseFeatureTests {
 			}?.value
 		}
 		#expect(try await draws().isEmpty)
-		let afterTheFailedReRoll = await store.pool
-		expectNoDifference(afterTheFailedReRoll, pool)
+		let poolAfterTheFailedReRoll = await store.pool
+		expectNoDifference(poolAfterTheFailedReRoll, pool)
 	}
 }
 
