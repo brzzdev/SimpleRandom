@@ -37,12 +37,33 @@ jobs:
       # `brew install` rather than SimpleTrackerForAniList's `brew bundle`, because this repo has
       # no Brewfile. `just` is all this job needs — the recipe runs the generator through the same
       # two commands a human would, so the workflow cannot drift from what regeneration means.
-      # No SPM authentication step either: every dependency here is public (`BrzzUtils` arrives
-      # with #28, and this will need one then).
       - name: Install tools
         run: brew install just
 
+      # `pointfreeco/TCA26` is a **private** repository — the Point-Free beta this app is pinned
+      # to for `StoreActor` (ADR-0001) — so `swift package resolve` cannot clone it anonymously
+      # and the job dies before it reaches the generator. Every other pin is public.
+      #
+      # A classic PAT rather than the fine-grained kind SimpleTrackerForAniList uses for its own
+      # private packages: a fine-grained token can only grant repositories owned by its resource
+      # owner, and this one belongs to `pointfreeco`. Access comes from the authenticated user's
+      # own membership, which only a classic `repo`-scoped token carries.
+      #
+      # **That breadth is why the credential is handed over in the environment rather than written
+      # to `~/.gitconfig`.** A `repo`-scoped classic token reads every private repository its owner
+      # can, so a copy sitting in the runner's git config would stay readable by every later step —
+      # including the two third-party actions below — for the rest of the job. `GIT_CONFIG_*` is
+      # scoped to this step alone, so the token never touches disk and there is no cleanup to skip
+      # on a failure path. `swift package resolve` shells out to `git`, which inherits it.
+      #
+      # Scoped to that one repository, as the sibling scopes its own. A blanket rewrite of
+      # `https://github.com/` would also capture the `create-pull-request` push below and send it
+      # out under this token instead of the app's.
       - name: Regenerate licences
+        env:
+          GIT_CONFIG_COUNT: 1
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.SPM_TOKEN }}@github.com/pointfreeco/TCA26.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/pointfreeco/TCA26
         run: just licences
 
       # A GitHub App token rather than GITHUB_TOKEN, matching SimpleTrackerForAniList. Neither of
@@ -50,9 +71,10 @@ jobs:
       # signed commits, and no CI workflow that a GITHUB_TOKEN-authored PR would fail to trigger —
       # so this is consistency across the two repos bought ahead of need, deliberately.
       #
-      # **It needs `LICENCES_APP_ID` and `LICENCES_APP_PRIVATE_KEY` on this repo.** They are set
-      # on SimpleTrackerForAniList rather than at the org, so until they are added here the job
-      # fails on this step. The app needs `contents: write` + `pull-requests: write`.
+      # `LICENCES_APP_ID` and `LICENCES_APP_PRIVATE_KEY` are set on this repo, and the
+      # `brzzdev-licences` app is installed on it with `contents: write` + `pull-requests: write`.
+      # Secrets are per-repository here rather than inherited: `brzzdev` is a user account, not an
+      # organisation, so there is no org-level secret for a new repo to pick these up from.
       - name: Mint app token
         id: app-token
         uses: actions/create-github-app-token@v3
