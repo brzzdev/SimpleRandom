@@ -4,6 +4,7 @@
 //
 
 internal import ComposableArchitecture2
+internal import CustomDump
 internal import Database
 internal import Dependencies
 internal import DependenciesTestSupport
@@ -29,7 +30,7 @@ internal import Testing
 /// mints `…0001` upwards and never resets across a run, so a negative seed cannot collide
 /// with an id the feature causes the database to mint.
 ///
-/// Three things about `@FetchAll` under a `TestStore`, which ADR-0011 recorded as unknown
+/// Three things about `@FetchAll` under a `TestStoreActor`, which ADR-0011 recorded as unknown
 /// and these tests answered:
 ///
 /// - It has **already run** by the time the store exists, so a seeded world is initial state
@@ -43,7 +44,10 @@ internal import Testing
 ///   nothing else — a swipe to delete — is asserted by reading `store.summaries` directly.
 ///   `store.expect` there would fail with "changes expected, but none occurred" against
 ///   state that is in fact correct.
-@MainActor
+///
+/// The suite is not `@MainActor` and its stores are ``TestStoreActor``s: no module here sets
+/// `defaultIsolation`, so these features are not main-actor-isolated and the actor-isolated
+/// harness is the one the library points a package of this shape at (#64).
 @Suite(
 	.dependency(\.date, .constant(.seed)),
 	.dependency(\.defaultDatabase, try inMemory()),
@@ -51,15 +55,15 @@ internal import Testing
 internal struct ListsFeatureTests {
 	@Test
 	internal func creatingAListPutsItInTheIndex() async throws {
-		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
-		#expect(store.summaries.isEmpty)
+		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
+		#expect(await store.summaries.isEmpty)
 
-		store.send(.newListButtonTapped) {
+		await store.send(.newListButtonTapped) {
 			$0.destination = .editor(
 				ListEditor.State.DebugSnapshot(draft: Models.List.Draft(createdAt: .seed, name: ""))
 			)
 		}
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) {
 				$0.draft.emoji = "🥪"
 				$0.draft.name = "Lunch"
@@ -72,7 +76,7 @@ internal struct ListsFeatureTests {
 		// is spelled out, or the assertion would only be agreeing with itself.
 		let id = try #require(try await lists().first?.id)
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			$0.summaries = [
 				ListSummary(
@@ -91,22 +95,23 @@ internal struct ListsFeatureTests {
 				Models.List(id: UUID(-1), createdAt: .earlier, name: "Lunch")
 			}
 		}
-		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
-		#expect(store.summaries == [.seeded(id: UUID(-1), createdAt: .earlier, name: "Lunch")])
+		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
+		let seeded = await store.summaries
+		expectNoDifference(seeded, [.seeded(id: UUID(-1), createdAt: .earlier, name: "Lunch")])
 
-		store.send(.newListButtonTapped) {
+		await store.send(.newListButtonTapped) {
 			$0.destination = .editor(
 				ListEditor.State.DebugSnapshot(draft: Models.List.Draft(createdAt: .seed, name: ""))
 			)
 		}
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.name = "  Lunch  " }
 		}
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		let created = try #require(try await lists().last)
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			// Trimmed on the way in, and accepted alongside the name it duplicates: two Lists
 			// may share a name. Repetition is the user's own weighting mechanism, and a
@@ -120,39 +125,39 @@ internal struct ListsFeatureTests {
 
 	@Test
 	internal func aWhitespaceOnlyNameSavesNothing() async throws {
-		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
+		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
 
-		store.send(.newListButtonTapped) {
+		await store.send(.newListButtonTapped) {
 			$0.destination = .editor(
 				ListEditor.State.DebugSnapshot(draft: Models.List.Draft(createdAt: .seed, name: ""))
 			)
 		}
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.name = "   " }
 		}
 
 		// A name is trimmed and non-empty, so there is nothing here to save. The Save button
 		// is disabled on the same rule, and this is the reducer refusing anyway — the button
 		// is a courtesy, not the enforcement.
-		#expect(!store.destination!.editor!.isSavable)
+		#expect(await store.read { $0.destination?.editor?.isSavable } == false)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The sheet stays up, holding what was typed, rather than dismissing on a save that
 		// did not happen.
 		#expect(try await lists().isEmpty)
-		#expect(store.destination?.editor != nil)
+		#expect(await store.read { $0.destination?.editor != nil })
 	}
 
 	@Test
 	internal func aFailedSaveKeepsTheSheetUpAndTheDraftIntact() async throws {
-		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
+		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
 
-		store.send(.newListButtonTapped) {
+		await store.send(.newListButtonTapped) {
 			$0.destination = .editor(
 				ListEditor.State.DebugSnapshot(draft: Models.List.Draft(createdAt: .seed, name: ""))
 			)
 		}
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.name = "Lunch" }
 		}
 
@@ -167,7 +172,8 @@ internal struct ListsFeatureTests {
 
 		// Dismissing here would throw the draft away and leave the user believing it saved,
 		// which is the one outcome worse than the write failing.
-		#expect(store.destination?.editor?.draft.name == "Lunch")
+		let name = await store.read { $0.destination?.editor?.draft.name }
+		expectNoDifference(name, "Lunch")
 	}
 
 	@Test
@@ -178,16 +184,17 @@ internal struct ListsFeatureTests {
 				Item(id: UUID(-1), createdAt: .seed, listID: UUID(-1), title: "Pizza")
 			}
 		}
-		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
+		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
 		let summary = ListSummary.seeded(id: UUID(-1), itemCount: 1, name: "Lunch")
-		#expect(store.summaries == [summary])
+		let seeded = await store.summaries
+		expectNoDifference(seeded, [summary])
 
-		store.send(.editSwiped(summary)) {
+		await store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
 				ListEditor.State.DebugSnapshot(draft: Models.List.Draft(summary.list))
 			)
 		}
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) {
 				$0.draft.drawMode = .deck
 				$0.draft.name = "Lunch spots"
@@ -196,7 +203,7 @@ internal struct ListsFeatureTests {
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			$0.summaries = [
 				ListSummary(
@@ -213,7 +220,8 @@ internal struct ListsFeatureTests {
 		}
 		// The rename is an update rather than a replacement: the Item is still attached to
 		// the same row, which a delete-and-reinsert would have cascaded away.
-		#expect(try await items().map(\.title) == ["Pizza"])
+		let titles = try await items().map(\.title)
+		expectNoDifference(titles, ["Pizza"])
 	}
 
 	@Test
@@ -223,9 +231,10 @@ internal struct ListsFeatureTests {
 				Models.List(id: UUID(-1), createdAt: .seed, name: "Weekend walks")
 			}
 		}
-		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
+		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
 		let summary = ListSummary.seeded(id: UUID(-1), name: "Weekend walks")
-		#expect(store.summaries == [summary])
+		let seeded = await store.summaries
+		expectNoDifference(seeded, [summary])
 
 		// It goes with no confirmation at all — there is nothing in it to lose, and a
 		// confirmation on every delete is what teaches people to tap through them.
@@ -233,7 +242,7 @@ internal struct ListsFeatureTests {
 
 		#expect(try await lists().isEmpty)
 		try await reloadIndex(store)
-		#expect(store.summaries.isEmpty)
+		#expect(await store.summaries.isEmpty)
 	}
 
 	@Test
@@ -249,20 +258,22 @@ internal struct ListsFeatureTests {
 				Item(id: UUID(-3), createdAt: .seed, listID: UUID(-2), title: "Pizza")
 			}
 		}
-		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
+		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
 		let films = ListSummary(
 			dealtCount: 1,
 			itemCount: 2,
 			list: Models.List(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Films"),
 		)
-		#expect(
-			store.summaries == [
+		let seeded = await store.summaries
+		expectNoDifference(
+			seeded,
+			[
 				films,
 				.seeded(id: UUID(-2), createdAt: .later, itemCount: 1, name: "Lunch"),
 			]
 		)
 
-		store.send(.deleteSwiped(films)) {
+		await store.send(.deleteSwiped(films)) {
 			$0.destination = .confirmDeletion(
 				ListsFeature.ConfirmDeletion.State.DebugSnapshot(
 					itemCount: 2,
@@ -272,7 +283,8 @@ internal struct ListsFeatureTests {
 			)
 		}
 		// Nothing has gone yet: raising the confirmation is the whole of what the swipe did.
-		#expect(try await lists().count == 2)
+		let count = try await lists().count
+		expectNoDifference(count, 2)
 
 		// `Prompt` nils the destination out on the way through, so the alert's dismissal is
 		// the feature's own behaviour rather than SwiftUI's, replayed.
@@ -280,15 +292,19 @@ internal struct ListsFeatureTests {
 			$0.destination = nil
 		}?.value
 
-		#expect(try await lists().map(\.name) == ["Lunch"])
+		let remaining = try await lists().map(\.name)
+		expectNoDifference(remaining, ["Lunch"])
 		// Deleting a List deletes its Items, and their draw rows with them. The other List's
 		// Item is untouched.
-		#expect(try await items().map(\.title) == ["Pizza"])
+		let titles = try await items().map(\.title)
+		expectNoDifference(titles, ["Pizza"])
 		#expect(try await draws().isEmpty)
 
 		try await reloadIndex(store)
-		#expect(
-			store.summaries == [.seeded(id: UUID(-2), createdAt: .later, itemCount: 1, name: "Lunch")]
+		let summaries = await store.summaries
+		expectNoDifference(
+			summaries,
+			[.seeded(id: UUID(-2), createdAt: .later, itemCount: 1, name: "Lunch")]
 		)
 	}
 
@@ -304,10 +320,12 @@ internal struct ListsFeatureTests {
 				Models.List(id: UUID(-1), createdAt: .later, name: "Second")
 			}
 		}
-		let store = TestStore(initialState: ListsFeature.State()) { ListsFeature() }
+		let store = await TestStoreActor(initialState: ListsFeature.State()) { ListsFeature() }
 
-		#expect(
-			store.summaries == [
+		let summaries = await store.summaries
+		expectNoDifference(
+			summaries,
+			[
 				.seeded(id: UUID(-3), name: "First"),
 				.seeded(id: UUID(-1), createdAt: .later, name: "Second"),
 				.seeded(id: UUID(-2), createdAt: .later, name: "Third"),
@@ -329,8 +347,8 @@ extension ListsFeatureTests {
 	/// A write the feature makes reaches that property through a database observation, which
 	/// arrives on its own schedule. Waiting on the write's task is not enough, so this makes
 	/// the refresh the test asserts against a thing the test asked for.
-	private func reloadIndex(_ store: TestStore<ListsFeature>) async throws {
-		try await store.state.$summaries.load()
+	private func reloadIndex(_ store: TestStoreActor<ListsFeature>) async throws {
+		try await store.loadSummaries()
 	}
 
 	private func seed(_ write: @escaping @Sendable (Database) throws -> Void) async throws {
@@ -349,6 +367,30 @@ extension ListsFeatureTests {
 		try await database.read { db in
 			try Models.List.all.order { ($0.createdAt, $0.id) }.fetchAll(db)
 		}
+	}
+}
+
+// MARK: - Reaching an actor-isolated store
+
+extension TestStoreActor {
+	/// A `Sendable` projection of state, read from off the store's actor.
+	///
+	/// A `Feature.State` is not itself `Sendable` — it holds `@FetchAll` queries — so it cannot
+	/// be lifted off the actor to be picked apart, and `store.destination?.editor` therefore no
+	/// longer type-checks the way it did under ``TestStore``. This runs the picking apart *on*
+	/// the actor and hands back only what crosses safely (#64).
+	internal func read<Value: Sendable>(_ project: sending (State) -> Value) -> Value {
+		project(state)
+	}
+}
+
+extension TestStoreActor where Subject == ListsFeature {
+	/// Reloads the index, from off the store's actor.
+	///
+	/// `state` is isolated, so an isolated method reaches the query in place rather than
+	/// lifting the state out to it, and hands back nothing.
+	internal func loadSummaries() async throws {
+		try await state.$summaries.load()
 	}
 }
 

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 
+internal import CustomDump
 internal import Foundation
 internal import Models
 internal import SQLiteData
@@ -37,7 +38,7 @@ extension DatabaseTests {
 			// Every other test here is parameterised over `TableShape.all`, so without this
 			// one a seventh table would be added to the migrator and asserted about by
 			// nothing — which is precisely the append-only mistake this suite exists to catch.
-			#expect(tables == TableShape.all.map(\.name))
+			expectNoDifference(tables, TableShape.all.map(\.name))
 		}
 
 		@Test(arguments: TableShape.all)
@@ -58,7 +59,7 @@ extension DatabaseTests {
 			// The whole definition, not just the name: under an append-only schema a column's
 			// affinity, its nullability and its default are as permanent as its existence, and
 			// a missing `newID()` default would leave a table minting no ids at all.
-			#expect(columns == shape.columns)
+			expectNoDifference(columns, shape.columns)
 		}
 
 		@Test(arguments: TableShape.all)
@@ -77,7 +78,7 @@ extension DatabaseTests {
 
 			// One column, never a compound key, and `TEXT` because it holds a `UUID`. An
 			// `AUTOINCREMENT` integer would let two devices both mint `id: 1`.
-			#expect(primaryKey == [PrimaryKeyColumn(name: shape.primaryKeyColumn, type: "TEXT")])
+			expectNoDifference(primaryKey, [PrimaryKeyColumn(name: shape.primaryKeyColumn, type: "TEXT")])
 		}
 
 		@Test(arguments: TableShape.all)
@@ -97,7 +98,7 @@ extension DatabaseTests {
 			// Every expectation below spells `CASCADE`, which is the assertion: SQLite's
 			// implicit `NO ACTION` is rejected by the sync layer, and `SET NULL` and
 			// `SET DEFAULT` would leave rows this domain has no meaning for.
-			#expect(Set(foreignKeys) == shape.foreignKeys)
+			expectNoDifference(Set(foreignKeys), shape.foreignKeys)
 		}
 
 		@Test(arguments: TableShape.all)
@@ -141,7 +142,7 @@ extension DatabaseTests {
 			// column's default is a generator registered on the connection — and the ids it
 			// mints are distinct, which is the whole requirement a distributed schema places
 			// on them.
-			#expect(Set(lists.map(\.id)).count == 2)
+			expectNoDifference(Set(lists.map(\.id)).count, 2)
 			// And the mode a List is born in, which the editor sheet may leave alone.
 			#expect(lists.allSatisfy { $0.drawMode == .independent })
 		}

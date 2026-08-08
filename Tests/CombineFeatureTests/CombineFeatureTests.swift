@@ -4,6 +4,7 @@
 //
 
 internal import ComposableArchitecture2
+internal import CustomDump
 internal import Database
 internal import Dependencies
 internal import DependenciesTestSupport
@@ -38,7 +39,10 @@ internal import Testing
 /// observation rather than through the write's own task, and they drive no assertion of
 /// their own — so a write that moves nothing else is asserted by reading the property back
 /// after ``reloadIndex(_:)`` rather than with `store.expect`.
-@MainActor
+///
+/// The suite is not `@MainActor` and its stores are ``TestStoreActor``s: no module here sets
+/// `defaultIsolation`, so these features are not main-actor-isolated and the actor-isolated
+/// harness is the one the library points a package of this shape at (#64).
 @Suite(
 	.dependency(\.date, .constant(.seed)),
 	.dependency(\.defaultDatabase, try inMemory()),
@@ -58,16 +62,17 @@ internal struct CombineFeatureTests {
 				Item(id: UUID(-3), createdAt: .seed, listID: UUID(-2), title: "Heat")
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
-		#expect(store.summaries.isEmpty)
-		#expect(store.listCount == 2)
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
+		#expect(await store.summaries.isEmpty)
+		let listCount = await store.listCount
+		expectNoDifference(listCount, 2)
 
 		// `options` is spelled out rather than left to the snapshot's default. That default is
 		// a lazy `_snapshotType`, which traps the moment the comparison reads it — so a
 		// `@FetchAll` in an expected state is supplied or it takes the test process down. Here
 		// it doubles as the assertion that the checklist is every List, newest last, each with
 		// its own Item count.
-		store.send(.newComboButtonTapped) {
+		await store.send(.newComboButtonTapped) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(createdAt: .seed, name: ""),
@@ -81,24 +86,26 @@ internal struct CombineFeatureTests {
 		}
 
 		// Nothing ticked yet, so the footer prompts rather than counting a pool of zero.
-		let editor = try #require(store.destination?.editor)
-		#expect(editor.poolFooter == .prompt)
+		let options = try #require(await store.read { $0.destination?.editor?.options })
+		let emptyFooter = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(emptyFooter, .prompt)
 
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) {
 				$0.draft.emoji = "🍿"
 				$0.draft.name = "Friday night"
 			}
 		}
-		store.send(.destination(.editor(.listToggled(editor.options[0])))) {
+		await store.send(.destination(.editor(.listToggled(options[0])))) {
 			$0.destination.modify(\.editor) { $0.ticked = [UUID(-1)] }
 		}
-		store.send(.destination(.editor(.listToggled(editor.options[1])))) {
+		await store.send(.destination(.editor(.listToggled(options[1])))) {
 			$0.destination.modify(\.editor) { $0.ticked = [UUID(-1), UUID(-2)] }
 		}
 		// The live footer, and the whole point of the one form: three Items across two Lists,
 		// counted before anything has been written.
-		#expect(store.destination?.editor?.poolFooter == .pool(count: 3))
+		let poolFooter = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(poolFooter, .pool(count: 3))
 
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
@@ -109,11 +116,11 @@ internal struct CombineFeatureTests {
 		// — not an array column on the Combo (ADR-0008). Their ids are minted by the database
 		// for the same reason the Combo's is, so they are read back rather than written out.
 		let rows = try await memberships()
-		#expect(rows.map(\.listID) == [UUID(-1), UUID(-2)])
+		expectNoDifference(rows.map(\.listID), [UUID(-1), UUID(-2)])
 		#expect(rows.allSatisfy { $0.comboID == comboID })
 
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			$0.summaries = [
 				ComboSummary(
@@ -133,9 +140,9 @@ internal struct CombineFeatureTests {
 				Models.List.lunch
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 
-		store.send(.newComboButtonTapped) {
+		await store.send(.newComboButtonTapped) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(createdAt: .seed, name: ""),
@@ -144,18 +151,18 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.name = "  Friday night  " }
 		}
 
 		// Membership gates nothing: zero member Lists is legal, and there is no "combining
 		// needs two Lists" rule — it would block building a Combo up one List at a time.
-		#expect(store.destination?.editor?.isSavable == true)
+		#expect(await store.read { $0.destination?.editor?.isSavable } == true)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		let comboID = try #require(try await combos().first?.id)
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			// Trimmed on the way in, like a List's name.
 			$0.summaries = [.seeded(id: comboID, name: "Friday night")]
@@ -165,9 +172,9 @@ internal struct CombineFeatureTests {
 
 	@Test
 	internal func aWhitespaceOnlyNameSavesNothing() async throws {
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 
-		store.send(.newComboButtonTapped) {
+		await store.send(.newComboButtonTapped) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(createdAt: .seed, name: ""),
@@ -176,20 +183,20 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.name = "   " }
 		}
 
 		// A name is trimmed and non-empty, so there is nothing here to save. The Save button
 		// is disabled on the same rule, and this is the reducer refusing anyway — the button
 		// is a courtesy, not the enforcement.
-		#expect(store.destination?.editor?.isSavable == false)
+		#expect(await store.read { $0.destination?.editor?.isSavable } == false)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The sheet stays up, holding what was typed, rather than dismissing on a save that
 		// did not happen.
 		#expect(try await combos().isEmpty)
-		#expect(store.destination?.editor != nil)
+		#expect(await store.read { $0.destination?.editor != nil })
 	}
 
 	// MARK: - Editing membership
@@ -209,13 +216,14 @@ internal struct CombineFeatureTests {
 				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 		let summary = ComboSummary.seeded(id: UUID(-1), itemCount: 1, listCount: 1)
-		#expect(store.summaries == [summary])
+		let summaries = await store.summaries
+		expectNoDifference(summaries, [summary])
 
 		// The form reopens with what the Combo already holds, which is what makes it *the*
 		// home for membership rather than one of two (ADR-0020).
-		store.send(.editSwiped(summary)) {
+		await store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(summary.combo),
@@ -227,31 +235,35 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		#expect(store.destination?.editor?.poolFooter == .pool(count: 1))
+		let seededFooter = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(seededFooter, .pool(count: 1))
 
 		// Swap Lunch out for Films, and make it a Deck while we are here.
-		let options = try #require(store.destination?.editor?.options)
-		store.modify {
+		let options = try #require(await store.read { $0.destination?.editor?.options })
+		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.drawMode = .deck }
 		}
-		store.send(.destination(.editor(.listToggled(options[0])))) {
+		await store.send(.destination(.editor(.listToggled(options[0])))) {
 			$0.destination.modify(\.editor) { $0.unticked = [UUID(-1)] }
 		}
-		store.send(.destination(.editor(.listToggled(options[1])))) {
+		await store.send(.destination(.editor(.listToggled(options[1])))) {
 			$0.destination.modify(\.editor) { $0.ticked = [UUID(-2)] }
 		}
-		#expect(store.destination?.editor?.selectedListIDs == [UUID(-2)])
-		#expect(store.destination?.editor?.poolFooter == .pool(count: 2))
+		let selectedListIDs = await store.read { $0.destination?.editor?.selectedListIDs }
+		expectNoDifference(selectedListIDs, [UUID(-2)])
+		let swappedFooter = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(swappedFooter, .pool(count: 2))
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// The membership was replaced rather than the Combo, and the Lists themselves are
 		// untouched: a Combo points at them and does not own them.
 		let rows = try await memberships()
-		#expect(rows.map(\.listID) == [UUID(-2)])
-		#expect(try await lists().map(\.name) == ["Lunch", "Films"])
+		expectNoDifference(rows.map(\.listID), [UUID(-2)])
+		let names = try await lists().map(\.name)
+		expectNoDifference(names, ["Lunch", "Films"])
 
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			$0.summaries = [
 				ComboSummary(
@@ -280,10 +292,10 @@ internal struct CombineFeatureTests {
 				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .earlier, listID: UUID(-1))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 		let summary = ComboSummary.seeded(id: UUID(-1), listCount: 1)
 
-		store.send(.editSwiped(summary)) {
+		await store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(summary.combo),
@@ -295,8 +307,8 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		let films = try #require(store.destination?.editor?.options.last)
-		store.send(.destination(.editor(.listToggled(films)))) {
+		let films = try #require(await store.read { $0.destination?.editor?.options.last })
+		await store.send(.destination(.editor(.listToggled(films)))) {
 			$0.destination.modify(\.editor) { $0.ticked = [UUID(-2)] }
 		}
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
@@ -306,17 +318,17 @@ internal struct CombineFeatureTests {
 		// device as a deletion followed by a fresh row.
 		let rows = try await memberships()
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			$0.summaries = [.seeded(id: UUID(-1), listCount: 2)]
 		}
-		#expect(rows.count == 2)
-		#expect(
-			rows[0]
-				== ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .earlier, listID: UUID(-1))
+		expectNoDifference(rows.count, 2)
+		expectNoDifference(
+			rows[0],
+			ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .earlier, listID: UUID(-1))
 		)
-		#expect(rows[1].listID == UUID(-2))
-		#expect(rows[1].createdAt == .seed)
+		expectNoDifference(rows[1].listID, UUID(-2))
+		expectNoDifference(rows[1].createdAt, .seed)
 	}
 
 	// MARK: - Membership changed on another device while the form is open
@@ -335,10 +347,10 @@ internal struct CombineFeatureTests {
 				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 		let summary = ComboSummary.seeded(id: UUID(-1), itemCount: 1, listCount: 1)
 
-		store.send(.editSwiped(summary)) {
+		await store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(summary.combo),
@@ -359,21 +371,23 @@ internal struct CombineFeatureTests {
 		}
 
 		// The user renames the Combo and nothing else — neither delta set mentions a List.
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.name = "Movie night" }
 		}
-		#expect(store.destination?.editor?.ticked.isEmpty == true)
-		#expect(store.destination?.editor?.unticked.isEmpty == true)
+		#expect(await store.read { $0.destination?.editor?.ticked.isEmpty } == true)
+		#expect(await store.read { $0.destination?.editor?.unticked.isEmpty } == true)
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// Films survives. Under a selection snapshot taken when the form opened, saving the
 		// rename would have deleted it — a membership this sitting never saw. Asserted against
 		// the database rather than the index, because it is the write that was wrong.
-		#expect(try await memberships().map(\.listID) == [UUID(-1), UUID(-2)])
-		#expect(try await combos().map(\.name) == ["Movie night"])
+		let listIDs = try await memberships().map(\.listID)
+		expectNoDifference(listIDs, [UUID(-1), UUID(-2)])
+		let names = try await combos().map(\.name)
+		expectNoDifference(names, ["Movie night"])
 
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			$0.summaries = [.seeded(id: UUID(-1), itemCount: 2, listCount: 2, name: "Movie night")]
 		}
@@ -394,10 +408,10 @@ internal struct CombineFeatureTests {
 				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .later, listID: UUID(-2))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 		let summary = ComboSummary.seeded(id: UUID(-1), itemCount: 2, listCount: 2)
 
-		store.send(.editSwiped(summary)) {
+		await store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(summary.combo),
@@ -418,17 +432,18 @@ internal struct CombineFeatureTests {
 			try ComboList.find(UUID(-2)).delete().execute(db)
 		}
 
-		store.modify {
+		await store.modify {
 			$0.destination.modify(\.editor) { $0.draft.name = "Movie night" }
 		}
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 
 		// Saving does not put it back. A snapshot taken when the form opened still held Films,
 		// so it would have reinserted the row the other device had just deleted.
-		#expect(try await memberships().map(\.listID) == [UUID(-1)])
+		let listIDs = try await memberships().map(\.listID)
+		expectNoDifference(listIDs, [UUID(-1)])
 
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			$0.summaries = [.seeded(id: UUID(-1), itemCount: 1, listCount: 1, name: "Movie night")]
 		}
@@ -445,13 +460,13 @@ internal struct CombineFeatureTests {
 
 		// The form's state on its own, with no store around it: what is under test is the two
 		// properties the `Lists` footer chooses between, and driving a live query to refresh
-		// underneath a `TestStore` would be testing the observation rather than the choice.
+		// underneath a `TestStoreActor` would be testing the observation rather than the choice.
 		var state = ComboEditor.State(draft: Combo.Draft(createdAt: .seed, name: "Friday night"))
-		#expect(state.options.map(\.list.name) == ["Lunch"])
+		expectNoDifference(state.options.map(\.list.name), ["Lunch"])
 
 		state.ticked = [UUID(-1)]
-		#expect(state.selectedOptions.map(\.id) == [UUID(-1)])
-		#expect(state.poolFooter == .pool(count: 1))
+		expectNoDifference(state.selectedOptions.map(\.id), [UUID(-1)])
+		expectNoDifference(state.poolFooter, .pool(count: 1))
 
 		// The other iPhone deletes the List this form has ticked.
 		try await database.write { db in
@@ -462,7 +477,7 @@ internal struct CombineFeatureTests {
 
 		// The tick survives in the delta — the user did ask for it, and the form does not
 		// quietly edit their input — but nothing on the checklist can show it.
-		#expect(state.selectedListIDs == [UUID(-1)])
+		expectNoDifference(state.selectedListIDs, [UUID(-1)])
 		#expect(state.selectedOptions.isEmpty)
 
 		// So the footer says "Pick the Lists to draw from." rather than "0 items in the pool."
@@ -471,7 +486,7 @@ internal struct CombineFeatureTests {
 		// Asserted as the value the view renders, not as the ingredients it would have branched
 		// on: deriving this in `State` is what makes the decision testable at all, and this
 		// assertion fails if it is ever taken back off `selectedOptions`.
-		#expect(state.poolFooter == .prompt)
+		expectNoDifference(state.poolFooter, .prompt)
 	}
 
 	// MARK: - The deduplicated pool
@@ -493,11 +508,13 @@ internal struct CombineFeatureTests {
 				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-1))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 
 		// `1 List · Deck · 1 of 2 left`, not `2 Lists · Deck · 2 of 4 left`.
-		#expect(
-			store.summaries == [
+		let summaries = await store.summaries
+		expectNoDifference(
+			summaries,
+			[
 				ComboSummary(
 					combo: Combo(
 						id: UUID(-1),
@@ -513,8 +530,8 @@ internal struct CombineFeatureTests {
 		)
 
 		// And the form ticks it once, because a `Set` is what it holds the selection in.
-		let summary = try #require(store.summaries.first)
-		store.send(.editSwiped(summary)) {
+		let summary = try #require(await store.summaries.first)
+		await store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(summary.combo),
@@ -527,23 +544,27 @@ internal struct CombineFeatureTests {
 				)
 			)
 		}
-		#expect(store.destination?.editor?.poolFooter == .pool(count: 2))
+		let poolFooter = await store.read { $0.destination?.editor?.poolFooter }
+		expectNoDifference(poolFooter, .pool(count: 2))
 
 		// Saving leaves both rows exactly where they are. Deduplication belongs in the pool,
 		// which is where ADR-0008 puts it — a save that collapsed them would be issuing a hard,
 		// global delete of a row another device authored, which nobody asked this form to do.
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
 		try await reloadIndex(store)
-		store.expect { $0.destination = nil }
-		#expect(
-			try await memberships() == [
+		await store.expect { $0.destination = nil }
+		let rows = try await memberships()
+		expectNoDifference(
+			rows,
+			[
 				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1)),
 				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .later, listID: UUID(-1)),
 			]
 		)
 		// And the caption still reads `1 List`, which is the whole point of the deduplication
 		// being a property of the query rather than of the rows.
-		#expect(store.summaries.map(\.listCount) == [1])
+		let listCounts = await store.summaries.map(\.listCount)
+		expectNoDifference(listCounts, [1])
 	}
 
 	@Test
@@ -562,14 +583,14 @@ internal struct CombineFeatureTests {
 				ComboDraw(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, itemID: UUID(-2))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 
 		// `1 List · Deck · 1 of 1 left` — a stale draw counts for nothing rather than reading
 		// the Deck down below zero.
-		let summary = try #require(store.summaries.first)
-		#expect(summary.dealtCount == 0)
-		#expect(summary.itemCount == 1)
-		#expect(summary.remainingCount == 1)
+		let summary = try #require(await store.summaries.first)
+		expectNoDifference(summary.dealtCount, 0)
+		expectNoDifference(summary.itemCount, 1)
+		expectNoDifference(summary.remainingCount, 1)
 	}
 
 	// MARK: - Deleting
@@ -581,16 +602,17 @@ internal struct CombineFeatureTests {
 				Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 		let summary = ComboSummary.seeded(id: UUID(-1))
-		#expect(store.summaries == [summary])
+		let summaries = await store.summaries
+		expectNoDifference(summaries, [summary])
 
 		// It goes with no confirmation at all — there is no arrangement in it to lose.
 		await store.send(.deleteSwiped(summary))?.value
 
 		#expect(try await combos().isEmpty)
 		try await reloadIndex(store)
-		#expect(store.summaries.isEmpty)
+		#expect(await store.summaries.isEmpty)
 	}
 
 	@Test
@@ -607,21 +629,23 @@ internal struct CombineFeatureTests {
 				Combo(id: UUID(-2), createdAt: .later, name: "Weeknights")
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 		let summary = ComboSummary(
 			combo: Combo(id: UUID(-1), createdAt: .seed, name: "Friday night"),
 			dealtCount: 1,
 			itemCount: 1,
 			listCount: 1,
 		)
-		#expect(
-			store.summaries == [
+		let summaries = await store.summaries
+		expectNoDifference(
+			summaries,
+			[
 				summary,
 				.seeded(id: UUID(-2), createdAt: .later, name: "Weeknights"),
 			]
 		)
 
-		store.send(.deleteSwiped(summary)) {
+		await store.send(.deleteSwiped(summary)) {
 			$0.destination = .confirmDeletion(
 				CombineFeature.ConfirmDeletion.State.DebugSnapshot(
 					comboID: UUID(-1),
@@ -630,7 +654,8 @@ internal struct CombineFeatureTests {
 			)
 		}
 		// Nothing has gone yet: raising the confirmation is the whole of what the swipe did.
-		#expect(try await combos().count == 2)
+		let count = try await combos().count
+		expectNoDifference(count, 2)
 
 		// `Prompt` nils the destination out on the way through, so the alert's dismissal is
 		// the feature's own behaviour rather than SwiftUI's, replayed.
@@ -638,13 +663,16 @@ internal struct CombineFeatureTests {
 			$0.destination = nil
 		}?.value
 
-		#expect(try await combos().map(\.name) == ["Weeknights"])
+		let names = try await combos().map(\.name)
+		expectNoDifference(names, ["Weeknights"])
 		// The memberships and the draw rows cascade away with the Combo — and the Lists in it
 		// are kept, which is exactly what the alert promised.
 		#expect(try await memberships().isEmpty)
 		#expect(try await draws().isEmpty)
-		#expect(try await lists().map(\.name) == ["Lunch"])
-		#expect(try await items().map(\.title) == ["Pizza"])
+		let listNames = try await lists().map(\.name)
+		expectNoDifference(listNames, ["Lunch"])
+		let titles = try await items().map(\.title)
+		expectNoDifference(titles, ["Pizza"])
 	}
 
 	@Test
@@ -662,8 +690,9 @@ internal struct CombineFeatureTests {
 				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
-		#expect(store.summaries == [.seeded(id: UUID(-1), itemCount: 2, listCount: 2)])
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
+		let summaries = await store.summaries
+		expectNoDifference(summaries, [.seeded(id: UUID(-1), itemCount: 2, listCount: 2)])
 
 		// Not a gesture this screen owns — it is the Lists tab's delete, arriving through the
 		// schema. The Combo silently shrinks, and nothing warned first (ADR-0008).
@@ -672,8 +701,10 @@ internal struct CombineFeatureTests {
 		}
 
 		try await reloadIndex(store)
-		#expect(store.summaries == [.seeded(id: UUID(-1), itemCount: 1, listCount: 1)])
-		#expect(store.listCount == 1)
+		let shrunk = await store.summaries
+		expectNoDifference(shrunk, [.seeded(id: UUID(-1), itemCount: 1, listCount: 1)])
+		let listCount = await store.listCount
+		expectNoDifference(listCount, 1)
 	}
 
 	// MARK: - Ordering
@@ -690,10 +721,12 @@ internal struct CombineFeatureTests {
 				Combo(id: UUID(-1), createdAt: .later, name: "Second")
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
 
-		#expect(
-			store.summaries == [
+		let summaries = await store.summaries
+		expectNoDifference(
+			summaries,
+			[
 				.seeded(id: UUID(-3), name: "First"),
 				.seeded(id: UUID(-1), createdAt: .later, name: "Second"),
 				.seeded(id: UUID(-2), createdAt: .later, name: "Third"),
@@ -731,8 +764,8 @@ extension CombineFeatureTests {
 				ComboList(id: UUID(-2), comboID: UUID(-1), createdAt: .seed, listID: UUID(-2))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
-		let summary = try #require(store.summaries.first)
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(await store.summaries.first)
 
 		// Pushed as optional child state, the same idiom the sheets use and the same one the
 		// Lists tab pushes its detail with — a `.navigationDestination(item:)` rather than a
@@ -742,7 +775,7 @@ extension CombineFeatureTests {
 		// That default is a lazy `_snapshotType`, which traps the moment the comparison reads
 		// it — so a fetched property in an expected state is supplied or it takes the test
 		// process down.
-		store.send(.rowTapped(summary)) {
+		await store.send(.rowTapped(summary)) {
 			$0.detail = ComboDetail.State.DebugSnapshot(
 				combo: summary.combo,
 				destination: nil,
@@ -755,10 +788,11 @@ extension CombineFeatureTests {
 			)
 		}
 
-		let detail = try #require(store.detail)
-		#expect(detail.itemCount == 3)
-		#expect(detail.randomiseCaption == .pool(count: 3))
-		#expect(detail.canRandomise)
+		let itemCount = await store.read { $0.detail?.itemCount }
+		expectNoDifference(itemCount, 3)
+		let randomiseCaption = await store.read { $0.detail?.randomiseCaption }
+		expectNoDifference(randomiseCaption, .pool(count: 3))
+		#expect(await store.read { $0.detail?.canRandomise } == true)
 	}
 
 	@Test
@@ -772,11 +806,11 @@ extension CombineFeatureTests {
 
 		// The screen's state on its own, with no store around it: what is under test is the
 		// property the pinned bar's caption is chosen by, and driving a live query to refresh
-		// underneath a `TestStore` would be testing the observation rather than the choice.
+		// underneath a `TestStoreActor` would be testing the observation rather than the choice.
 		var state = ComboDetail.State(combo: Combo(id: UUID(-1), createdAt: .seed, name: "Friday night"))
 
 		// Nothing in the Combo at all: the thing to add is a List, and it is added here.
-		#expect(state.randomiseCaption == .noLists)
+		expectNoDifference(state.randomiseCaption, .noLists)
 		#expect(state.canRandomise == false)
 
 		try await database.write { db in
@@ -789,8 +823,8 @@ extension CombineFeatureTests {
 		// A member List, and nothing in it. A different sentence because it asks for something
 		// different — Items, added on a screen this one is two taps from. One prompt covering
 		// both would name neither.
-		#expect(state.members.map(\.list.name) == ["Lunch"])
-		#expect(state.randomiseCaption == .noItems)
+		expectNoDifference(state.members.map(\.list.name), ["Lunch"])
+		expectNoDifference(state.randomiseCaption, .noItems)
 		#expect(state.canRandomise == false)
 
 		try await database.write { db in
@@ -804,7 +838,7 @@ extension CombineFeatureTests {
 		// with a reason. `canRandomise` is read off the caption, so the two can never disagree
 		// — a caption explaining a dimmed button beside a button that is not is the failure
 		// this rules out.
-		#expect(state.randomiseCaption == .pool(count: 1))
+		expectNoDifference(state.randomiseCaption, .pool(count: 1))
 		#expect(state.canRandomise)
 	}
 
@@ -844,13 +878,13 @@ extension CombineFeatureTests {
 		// 3-item one in a Combo they share — is `RandomiseFeatureTests`' claim about
 		// `State.draw()`, made once for both surfaces (ADR-0016).
 		let state = RandomiseFeature.State(scope: .combo(combo))
-		#expect(state.pool.map(\.id) == [UUID(-1), UUID(-2), UUID(-3)])
-		#expect(state.pool.map(\.title) == ["Pizza", "Pizza", "Pizza"])
+		expectNoDifference(state.pool.map(\.id), [UUID(-1), UUID(-2), UUID(-3)])
+		expectNoDifference(state.pool.map(\.title), ["Pizza", "Pizza", "Pizza"])
 		#expect(state.result == nil)
 
 		// Three entries and three chances, from two member Lists — and each one knows which
 		// List it came from, which is the only thing telling the three apart on the sheet.
-		#expect(state.sourceLists.map(\.name) == ["Lunch", "Films"])
+		expectNoDifference(state.sourceLists.map(\.name), ["Lunch", "Films"])
 	}
 
 	// The generator note `ListDetailTests` gives: `withRandomNumberGenerator` has no test
@@ -869,10 +903,10 @@ extension CombineFeatureTests {
 				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
-		let summary = try #require(store.summaries.first)
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(await store.summaries.first)
 
-		store.send(.rowTapped(summary)) {
+		await store.send(.rowTapped(summary)) {
 			$0.detail = ComboDetail.State.DebugSnapshot(
 				combo: summary.combo,
 				destination: nil,
@@ -885,7 +919,7 @@ extension CombineFeatureTests {
 		// You open a Combo, then randomise it — there is no Randomise on an index row, exactly
 		// as on the Lists tab (ADR-0016). The sheet is handed a `DrawScope.combo` and nothing
 		// else, and it has drawn its opening result by the time this returns.
-		store.send(.detail(.randomiseButtonTapped)) {
+		await store.send(.detail(.randomiseButtonTapped)) {
 			$0.detail?.destination = .randomise(
 				RandomiseFeature.State.DebugSnapshot(
 					drawToken: 1,
@@ -899,7 +933,8 @@ extension CombineFeatureTests {
 				)
 			)
 		}
-		#expect(store.detail?.destination?.randomise?.sourceList == lunch)
+		let sourceList = await store.read { $0.detail?.destination?.randomise?.sourceList }
+		expectNoDifference(sourceList, lunch)
 	}
 
 	@Test(.dependency(\.withRandomNumberGenerator, WithRandomNumberGenerator(SystemRandomNumberGenerator())))
@@ -920,10 +955,10 @@ extension CombineFeatureTests {
 				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
-		let summary = try #require(store.summaries.first)
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(await store.summaries.first)
 
-		store.send(.rowTapped(summary)) {
+		await store.send(.rowTapped(summary)) {
 			$0.detail = ComboDetail.State.DebugSnapshot(
 				combo: summary.combo,
 				destination: nil,
@@ -932,7 +967,7 @@ extension CombineFeatureTests {
 				members: [ListOption(itemCount: 1, list: deck)],
 			)
 		}
-		store.send(.detail(.randomiseButtonTapped)) {
+		await store.send(.detail(.randomiseButtonTapped)) {
 			$0.detail?.destination = .randomise(
 				RandomiseFeature.State.DebugSnapshot(
 					drawToken: 1,
@@ -952,7 +987,8 @@ extension CombineFeatureTests {
 		// Not one row moved. Drawing from a Combo writes no `ListDraw` row, so Lunch's own deck
 		// is exactly where it was; and it writes no `ComboDraw` row either, because the Combo is
 		// plain — a plain Combo pools everything on every tap and keeps no memory of it.
-		#expect(try await listDraws().map(\.itemID) == [UUID(-1)])
+		let listDrawIDs = try await listDraws().map(\.itemID)
+		expectNoDifference(listDrawIDs, [UUID(-1)])
 		#expect(try await draws().isEmpty)
 	}
 
@@ -970,11 +1006,11 @@ extension CombineFeatureTests {
 				ComboList(id: UUID(-1), comboID: UUID(-1), createdAt: .seed, listID: UUID(-1))
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
-		let summary = try #require(store.summaries.first)
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(await store.summaries.first)
 		let member = ListOption(itemCount: 1, list: lunch)
 
-		store.send(.rowTapped(summary)) {
+		await store.send(.rowTapped(summary)) {
 			$0.detail = ComboDetail.State.DebugSnapshot(
 				combo: summary.combo,
 				destination: nil,
@@ -988,7 +1024,7 @@ extension CombineFeatureTests {
 		// the Lists tab pushes, holding the same List record, with nothing conditional on which
 		// tab presented it (ADR-0014). Its own `draws` and `items` are its own queries, which is
 		// what makes it that screen rather than a copy of it.
-		store.send(.detail(.memberTapped(member))) {
+		await store.send(.detail(.memberTapped(member))) {
 			$0.detail?.detail = ListDetail.State.DebugSnapshot(
 				destination: nil,
 				draws: [],
@@ -1000,7 +1036,7 @@ extension CombineFeatureTests {
 		// And it keeps its own pinned Randomise, drawing from that List alone: the scope below
 		// is `.list`, so the row this deals writes to `ListDraw` and the Combo's deck never
 		// hears about it. There is no flag suppressing the button because a Combo presented it.
-		store.send(.detail(.detail(.randomiseButtonTapped))) {
+		await store.send(.detail(.detail(.randomiseButtonTapped))) {
 			$0.detail?.detail?.destination = .randomise(
 				RandomiseFeature.State.DebugSnapshot(
 					drawToken: 1,
@@ -1066,20 +1102,22 @@ extension CombineFeatureTests {
 		// unscoped `NOT IN comboDraws` — the shape `Item.undealt(in:)` can afford, because an
 		// Item belongs to exactly one List — would leave Friday night only Heat and Weeknights
 		// nothing at all, each Combo emptying the other's deck.
-		#expect(
-			RandomiseFeature.State(scope: .combo(friday)).pool.map(\.title) == ["Sushi", "Heat"]
+		expectNoDifference(
+			RandomiseFeature.State(scope: .combo(friday)).pool.map(\.title),
+			["Sushi", "Heat"]
 		)
-		#expect(
-			RandomiseFeature.State(scope: .combo(weeknights)).pool.map(\.title) == ["Pizza"]
+		expectNoDifference(
+			RandomiseFeature.State(scope: .combo(weeknights)).pool.map(\.title),
+			["Pizza"]
 		)
 
 		// The very same rows, read by the very same Combo turned plain. Switching a Deck back to
 		// plain preserves its rows and pools everything regardless — which is what lets switching
 		// back resume where it left off rather than start again, exactly as a List's does.
 		let plain = Combo(id: UUID(-1), createdAt: .seed, name: "Friday night")
-		#expect(
-			RandomiseFeature.State(scope: .combo(plain)).pool.map(\.title)
-				== ["Pizza", "Sushi", "Heat"]
+		expectNoDifference(
+			RandomiseFeature.State(scope: .combo(plain)).pool.map(\.title),
+			["Pizza", "Sushi", "Heat"]
 		)
 	}
 
@@ -1100,7 +1138,7 @@ extension CombineFeatureTests {
 			}
 		}
 
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .combo(combo))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
@@ -1111,16 +1149,16 @@ extension CombineFeatureTests {
 		// The pool shrinks by one on every draw, because the row the draw wrote takes the Item it
 		// dealt back out of the query the pool is (ADR-0021). Read rather than `expect`ed: a
 		// `@FetchAll` drives no assertion of its own and nothing else has moved alongside it.
-		#expect(store.pool.isEmpty)
+		#expect(await store.pool.isEmpty)
 
 		// The row names both ids, unlike a `ListDraw`: an Item belongs to any number of Combos,
 		// so its own id would not say which of them dealt it. And the id is not written out —
 		// no insert site in the app names one (ADR-0011).
 		let rows = try await draws()
 		let dealt = try #require(rows.first { $0.itemID == UUID(-2) })
-		#expect(rows.count == 2)
-		#expect(dealt.comboID == UUID(-1))
-		#expect(dealt.createdAt == .seed)
+		expectNoDifference(rows.count, 2)
+		expectNoDifference(dealt.comboID, UUID(-1))
+		expectNoDifference(dealt.createdAt, .seed)
 		// And not one `ListDraw` row, which is the rule rather than the gap: drawing from a
 		// Combo leaves every member List's own deck exactly as it was (ADR-0007).
 		#expect(try await listDraws().isEmpty)
@@ -1160,9 +1198,9 @@ extension CombineFeatureTests {
 			}
 		}
 		let pool = try await pooledItems()
-		#expect(pool.count == 4)
+		expectNoDifference(pool.count, 4)
 
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .combo(combo))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
@@ -1172,8 +1210,9 @@ extension CombineFeatureTests {
 		// The exhausted sheet names the Combo, not a member List: "Every item in *Friday night*
 		// has been dealt once." is the same screen and the same announcement a List Deck shows,
 		// reading its name off the scope (ADR-0016).
-		#expect(store.state.scope.name == "Friday night")
-		#expect(store.canDrawAgain)
+		let scopeName = await store.read { $0.scope.name }
+		expectNoDifference(scopeName, "Friday night")
+		#expect(await store.canDrawAgain)
 
 		// **Reshuffle deletes that Combo's rows** and deals the first card of the run.
 		await store.send(.reshuffleButtonTapped)?.value
@@ -1181,10 +1220,10 @@ extension CombineFeatureTests {
 			$0.drawToken = 2
 			// The whole pool, put back by the delete this action follows, less nothing: the card
 			// it deals is taken out by the insert that has not run yet.
-			$0.result = store.result
+			$0.result = store.actual(\.result)
 			$0.pool = pool
 		}
-		var dealt = [try #require(store.result?.item)]
+		var dealt = [try #require(await store.result?.item)]
 		try await settle(store)
 
 		// Then right through to the last card. Which card each draw lands on is the generator's
@@ -1198,30 +1237,33 @@ extension CombineFeatureTests {
 		for draw in 2...pool.count {
 			await store.send(.againButtonTapped) {
 				$0.drawToken = draw + 1
-				$0.result = store.result
-				$0.pool = store.pool
+				$0.result = store.actual(\.result)
+				$0.pool = store.actual(\.pool)
 			}?.value
-			let card = try #require(store.result?.item)
+			let card = try #require(await store.result?.item)
 			#expect(!dealt.contains(card))
 			dealt.append(card)
 
 			try await settle(store)
-			#expect(store.pool == pool.filter { !dealt.contains($0) })
+			let remaining = await store.pool
+			expectNoDifference(remaining, pool.filter { !dealt.contains($0) })
 		}
 
 		// The multiset of what came out *is* the pool, titles and all.
-		#expect(dealt.count == pool.count)
-		#expect(Set(dealt) == Set(pool))
-		#expect(dealt.map(\.title).sorted() == ["Heat", "Pizza", "Pizza", "Sushi"])
-		#expect(try await Set(draws().map(\.itemID)) == Set(pool.map(\.id)))
+		expectNoDifference(dealt.count, pool.count)
+		expectNoDifference(Set(dealt), Set(pool))
+		expectNoDifference(dealt.map(\.title).sorted(), ["Heat", "Pizza", "Pizza", "Sushi"])
+		let dealtIDs = try await Set(draws().map(\.itemID))
+		expectNoDifference(dealtIDs, Set(pool.map(\.id)))
 		// One row per card and no more. `comboDraws` is keyed on a surrogate id, so a card dealt
 		// twice would land a second row here rather than trip a constraint — which is why this
 		// surface is where a stale pool went unnoticed, and why the count is asserted rather than
 		// left to the schema.
-		#expect(try await draws().count == pool.count)
+		let rowCount = try await draws().count
+		expectNoDifference(rowCount, pool.count)
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
-		store.send(.againButtonTapped) {
+		await store.send(.againButtonTapped) {
 			$0.drawToken = pool.count + 2
 			$0.result = .exhausted
 			$0.pool = []
@@ -1248,7 +1290,7 @@ extension CombineFeatureTests {
 		// **An exhausted member List does not shrink the Combo's pool.** Pizza is in it, because
 		// a Combo pools every Item of every member regardless of what that List has dealt — so
 		// this Combo Deck has a card to deal, and the pick is forced.
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .combo(combo))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .combo(combo))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
@@ -1257,19 +1299,22 @@ extension CombineFeatureTests {
 		try await settle(store)
 
 		// One direction: the Combo's deal wrote its own row and left Lunch's exactly as it was.
-		#expect(try await draws().map(\.itemID) == [UUID(-1)])
-		#expect(try await listDraws().map(\.itemID) == [UUID(-1)])
+		let comboDrawIDs = try await draws().map(\.itemID)
+		expectNoDifference(comboDrawIDs, [UUID(-1)])
+		let listDrawIDs = try await listDraws().map(\.itemID)
+		expectNoDifference(listDrawIDs, [UUID(-1)])
 
 		// The other: Lunch's own Reshuffle, from the real `ListDetail` — the screen a member row
 		// pushes — puts Lunch's card back and leaves the Combo's deck spent. "Dealt in Lunch" and
 		// "dealt in Friday night" are separate facts, and this is the direction most likely to be
 		// "fixed" by someone who has not read ADR-0007.
-		let listStore = TestStore(initialState: ListDetail.State(list: deck)) { ListDetail() }
-		#expect(listStore.isExhausted)
+		let listStore = await TestStoreActor(initialState: ListDetail.State(list: deck)) { ListDetail() }
+		#expect(await listStore.isExhausted)
 		await listStore.send(.reshuffleButtonTapped)?.value
 
 		#expect(try await listDraws().isEmpty)
-		#expect(try await draws().map(\.itemID) == [UUID(-1)])
+		let comboDrawIDsAfterTheListReshuffle = try await draws().map(\.itemID)
+		expectNoDifference(comboDrawIDsAfterTheListReshuffle, [UUID(-1)])
 
 		// And the Combo is still exhausted with Lunch's deck full: its pool is the Item, and its
 		// own row is the only thing that takes it out.
@@ -1301,7 +1346,7 @@ extension CombineFeatureTests {
 
 		// The screen's state on its own, with no store around it: what is under test is the
 		// arithmetic the pinned bar's caption is made of, and driving a live query to refresh
-		// underneath a `TestStore` would be testing the observation rather than the arithmetic.
+		// underneath a `TestStoreActor` would be testing the observation rather than the arithmetic.
 		let state = ComboDetail.State(
 			combo: Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
 		)
@@ -1309,10 +1354,10 @@ extension CombineFeatureTests {
 		// `Deck · 2 of 3 left`, and the button live. The stale draw counts for nothing — the
 		// same condition `ComboSummary.index` joins on, so the row and the screen it opens
 		// cannot come to disagree.
-		#expect(state.draws.map(\.itemID) == [UUID(-1)])
-		#expect(state.dealtCount == 1)
-		#expect(state.remainingCount == 2)
-		#expect(state.randomiseCaption == .deck(remaining: 2, total: 3))
+		expectNoDifference(state.draws.map(\.itemID), [UUID(-1)])
+		expectNoDifference(state.dealtCount, 1)
+		expectNoDifference(state.remainingCount, 2)
+		expectNoDifference(state.randomiseCaption, .deck(remaining: 2, total: 3))
 		#expect(state.canRandomise)
 		#expect(state.isExhausted == false)
 	}
@@ -1341,27 +1386,31 @@ extension CombineFeatureTests {
 				ComboDraw(id: UUID(-2), comboID: UUID(-1), createdAt: .later, itemID: UUID(-2))
 			}
 		}
-		let store = TestStore(initialState: ComboDetail.State(combo: combo)) { ComboDetail() }
+		let store = await TestStoreActor(initialState: ComboDetail.State(combo: combo)) { ComboDetail() }
 
 		// Spent, and the button reads **Reshuffle** rather than going dim: `canRandomise` stays
 		// true here, and a dimmed Reshuffle would take away the only way out of a spent Combo
 		// Deck.
-		#expect(store.randomiseCaption == .deck(remaining: 0, total: 2))
-		#expect(store.isExhausted)
-		#expect(store.canRandomise)
+		let randomiseCaption = await store.randomiseCaption
+		expectNoDifference(randomiseCaption, .deck(remaining: 0, total: 2))
+		#expect(await store.isExhausted)
+		#expect(await store.canRandomise)
 
 		await store.send(.reshuffleButtonTapped)?.value
 
 		// This Combo's rows and not one more. Read rather than `expect`ed, for the reason
 		// ``deletingAnEmptyComboDoesNotAskFirst`` gives: Reshuffle moves nothing but a
 		// `@FetchAll`.
-		#expect(try await draws().map(\.comboID) == [UUID(-2)])
-		#expect(try await listDraws().map(\.itemID) == [UUID(-1)])
+		let comboDrawIDs = try await draws().map(\.comboID)
+		expectNoDifference(comboDrawIDs, [UUID(-2)])
+		let listDrawIDs = try await listDraws().map(\.itemID)
+		expectNoDifference(listDrawIDs, [UUID(-1)])
 
 		try await reloadDraws(store)
-		#expect(store.draws.isEmpty)
-		#expect(store.randomiseCaption == .deck(remaining: 2, total: 2))
-		#expect(store.isExhausted == false)
+		#expect(await store.draws.isEmpty)
+		let reshuffledCaption = await store.randomiseCaption
+		expectNoDifference(reshuffledCaption, .deck(remaining: 2, total: 2))
+		#expect(await store.isExhausted == false)
 	}
 
 	@Test
@@ -1389,7 +1438,7 @@ extension CombineFeatureTests {
 			}
 		}
 		try await state.$members.load()
-		#expect(state.randomiseCaption == .deck(remaining: 1, total: 2))
+		expectNoDifference(state.randomiseCaption, .deck(remaining: 1, total: 2))
 		#expect(state.isExhausted == false)
 
 		// And so does a whole member List, which is the case a List Deck has no equivalent of:
@@ -1401,7 +1450,7 @@ extension CombineFeatureTests {
 			}
 		}
 		try await state.$members.load()
-		#expect(state.randomiseCaption == .deck(remaining: 2, total: 3))
+		expectNoDifference(state.randomiseCaption, .deck(remaining: 2, total: 3))
 		#expect(state.isExhausted == false)
 	}
 
@@ -1431,10 +1480,10 @@ extension CombineFeatureTests {
 				ListDraw(itemID: UUID(-2), createdAt: .seed)
 			}
 		}
-		let store = TestStore(initialState: CombineFeature.State()) { CombineFeature() }
-		let summary = try #require(store.summaries.first)
+		let store = await TestStoreActor(initialState: CombineFeature.State()) { CombineFeature() }
+		let summary = try #require(await store.summaries.first)
 
-		store.send(.editSwiped(summary)) {
+		await store.send(.editSwiped(summary)) {
 			$0.destination = .editor(
 				.editing(
 					Combo.Draft(summary.combo),
@@ -1450,8 +1499,8 @@ extension CombineFeatureTests {
 			)
 		}
 
-		let options = try #require(store.destination?.editor?.options)
-		store.send(.destination(.editor(.listToggled(options[1])))) {
+		let options = try #require(await store.read { $0.destination?.editor?.options })
+		await store.send(.destination(.editor(.listToggled(options[1])))) {
 			$0.destination.modify(\.editor) { $0.unticked = [UUID(-2)] }
 		}
 		await store.send(.destination(.editor(.saveButtonTapped)))?.value
@@ -1460,19 +1509,20 @@ extension CombineFeatureTests {
 		// deck any more, so neither is the record of dealing them (ADR-0023). Its draw of Pizza
 		// stays, because Lunch is still a member.
 		let rows = try await draws()
-		#expect(rows.filter { $0.comboID == UUID(-1) }.map(\.itemID) == [UUID(-1)])
+		expectNoDifference(rows.filter { $0.comboID == UUID(-1) }.map(\.itemID), [UUID(-1)])
 
 		// **And not one row more.** Weeknights still holds Heat and keeps its own draw of it —
 		// the delete is scoped by Combo as well as by Item, or unticking here would empty every
 		// other Combo's memory of the same Items. Films' own `ListDraw` row is untouched too:
 		// the form reaches no `ListDraw` row at all (ADR-0007).
-		#expect(rows.filter { $0.comboID == UUID(-2) }.map(\.itemID) == [UUID(-2)])
-		#expect(try await listDraws().map(\.itemID) == [UUID(-2)])
+		expectNoDifference(rows.filter { $0.comboID == UUID(-2) }.map(\.itemID), [UUID(-2)])
+		let listDrawIDs = try await listDraws().map(\.itemID)
+		expectNoDifference(listDrawIDs, [UUID(-2)])
 
 		let friday = Combo(id: UUID(-1), createdAt: .seed, drawMode: .deck, name: "Friday night")
 		let weeknights = Combo(id: UUID(-2), createdAt: .later, drawMode: .deck, name: "Weeknights")
 		try await reloadIndex(store)
-		store.expect {
+		await store.expect {
 			$0.destination = nil
 			// `Deck · 0 of 1 left` for Friday night: it is down to Lunch, and its one card is
 			// dealt. The deleted rows leave no trace in the arithmetic — the point of deleting
@@ -1499,13 +1549,15 @@ extension CombineFeatureTests {
 		//
 		// `Deck · 1 of 2 left`, not `0 of 2`: Heat is back in the pool and back in the deck.
 		try await reloadIndex(store)
-		#expect(
-			store.summaries == [
+		let restored = await store.summaries
+		expectNoDifference(
+			restored,
+			[
 				ComboSummary(combo: friday, dealtCount: 1, itemCount: 2, listCount: 2),
 				ComboSummary(combo: weeknights, dealtCount: 1, itemCount: 1, listCount: 1),
 			]
 		)
-		#expect(RandomiseFeature.State(scope: .combo(friday)).pool.map(\.title) == ["Heat"])
+		expectNoDifference(RandomiseFeature.State(scope: .combo(friday)).pool.map(\.title), ["Heat"])
 	}
 
 	@Test
@@ -1523,7 +1575,7 @@ extension CombineFeatureTests {
 		// A Combo Deck pooling nothing has dealt everything it holds and is *not* exhausted: its
 		// Randomise is disabled with a prompt to add Items, rather than offering to put back
 		// cards that were never dealt. Both prompts come before the Deck caption for that reason.
-		#expect(state.randomiseCaption == .noItems)
+		expectNoDifference(state.randomiseCaption, .noItems)
 		#expect(state.canRandomise == false)
 		#expect(state.isExhausted == false)
 	}
@@ -1539,8 +1591,8 @@ extension CombineFeatureTests {
 
 	/// Reloads a Combo detail's own draw rows. See ``reloadIndex(_:)`` for why a test has to
 	/// ask.
-	private func reloadDraws(_ store: TestStore<ComboDetail>) async throws {
-		try await store.state.$draws.load()
+	private func reloadDraws(_ store: TestStoreActor<ComboDetail>) async throws {
+		try await store.loadDraws()
 	}
 
 	/// Runs the index's queries again and hands the results to the store's reads.
@@ -1548,9 +1600,8 @@ extension CombineFeatureTests {
 	/// A write the feature makes reaches those properties through a database observation,
 	/// which arrives on its own schedule. Waiting on the write's task is not enough, so this
 	/// makes the refresh the test asserts against a thing the test asked for.
-	private func reloadIndex(_ store: TestStore<CombineFeature>) async throws {
-		try await store.state.$listCount.load()
-		try await store.state.$summaries.load()
+	private func reloadIndex(_ store: TestStoreActor<CombineFeature>) async throws {
+		try await store.loadIndex()
 	}
 
 	/// Waits for a deal the randomise sheet started, then hands the pool the world it left
@@ -1560,9 +1611,9 @@ extension CombineFeatureTests {
 	/// would be racing it. The empty write queues behind that insert on the same serialised
 	/// writer, which is what makes the wait a fact rather than a sleep; the load is the one
 	/// ``reloadIndex(_:)`` explains.
-	private func settle(_ store: TestStore<RandomiseFeature>) async throws {
+	private func settle(_ store: TestStoreActor<RandomiseFeature>) async throws {
 		try await database.write { _ in }
-		try await store.state.$pool.load()
+		try await store.loadPool()
 	}
 
 	private func seed(_ write: @escaping @Sendable (Database) throws -> Void) async throws {
@@ -1615,6 +1666,60 @@ extension CombineFeatureTests {
 		try await database.read { db in
 			try Item.inCombo(UUID(-1)).order { ($0.createdAt, $0.id) }.fetchAll(db)
 		}
+	}
+}
+
+// MARK: - Reaching an actor-isolated store
+
+extension TestStoreActor {
+	/// The store's live value for a piece of state, read from inside a `changes` closure.
+	///
+	/// Those closures are synchronous, so `await store.result` is unavailable in one — and the
+	/// isolation is not merely assumed: `send` and `receive` are isolated to this store and call
+	/// the closure themselves, so it runs on this store's own executor.
+	///
+	/// Used only where the value is the generator's business rather than this suite's, exactly
+	/// as ``TestStore`` allowed the same read before #64. Every other field still travels
+	/// written down.
+	nonisolated internal func actual<Value: Sendable>(
+		_ keyPath: sending KeyPath<State, Value>
+	) -> Value {
+		assumeIsolated { $0.state[keyPath: keyPath] }
+	}
+
+	/// A `Sendable` projection of state, read from off the store's actor.
+	///
+	/// A `Feature.State` is not itself `Sendable` — it holds `@FetchAll` queries — so it cannot
+	/// be lifted off the actor to be picked apart, and `store.destination?.editor` therefore no
+	/// longer type-checks the way it did under ``TestStore``. This runs the picking apart *on*
+	/// the actor and hands back only what crosses safely (#64).
+	internal func read<Value: Sendable>(_ project: sending (State) -> Value) -> Value {
+		project(state)
+	}
+}
+
+extension TestStoreActor where Subject == ComboDetail {
+	/// Reloads a Combo detail's own draw rows, from off the store's actor.
+	internal func loadDraws() async throws {
+		try await state.$draws.load()
+	}
+}
+
+extension TestStoreActor where Subject == CombineFeature {
+	/// Reloads the index's queries, from off the store's actor.
+	///
+	/// `state` is isolated, so an isolated method reaches the queries in place rather than
+	/// lifting the state out to them, and hands back nothing.
+	internal func loadIndex() async throws {
+		try await state.$listCount.load()
+		try await state.$summaries.load()
+	}
+}
+
+extension TestStoreActor where Subject == RandomiseFeature {
+	/// Reloads the sheet's pool, from off the store's actor.
+	internal func loadPool() async throws {
+		try await state.$pool.load()
 	}
 }
 
