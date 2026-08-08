@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 
+internal import CustomDump
 internal import Foundation
 internal import Models
 internal import SQLiteData
@@ -56,8 +57,10 @@ extension DatabaseTests {
 			// Lunch takes with it its Items, the draw over one of them, its membership of
 			// Friday night, and that Combo's draw over its Item. Films and its Item are
 			// untouched, and the Combo itself stays and silently shrinks — nothing warns first.
-			#expect(
-				try await Snapshot(database) == Snapshot(
+			let snapshot = try await Snapshot(database)
+			expectNoDifference(
+				snapshot,
+				Snapshot(
 					comboDraws: [UUID(-2)],
 					comboLists: [UUID(-2)],
 					combos: [UUID(-1)],
@@ -117,8 +120,10 @@ extension DatabaseTests {
 			// draw, the late Combo keeps its membership and its own draw — a row arriving between
 			// the counting and the deleting is not covered by the question that was asked, so the
 			// delete has to name rows rather than tables for this half to hold.
-			#expect(
-				try await Snapshot(database) == Snapshot(
+			let snapshot = try await Snapshot(database)
+			expectNoDifference(
+				snapshot,
+				Snapshot(
 					comboDraws: [UUID(-2)],
 					comboLists: [UUID(-3)],
 					combos: [UUID(-2)],
@@ -164,8 +169,10 @@ extension DatabaseTests {
 			// The alternative was re-presenting the dialog whenever the count moved underneath,
 			// which holds the number literally at the cost of a confirmation that can bounce
 			// forever while another device is writing.
-			#expect(
-				try await Snapshot(database) == Snapshot(
+			let snapshot = try await Snapshot(database)
+			expectNoDifference(
+				snapshot,
+				Snapshot(
 					comboDraws: [],
 					comboLists: [],
 					combos: [],
@@ -205,8 +212,10 @@ extension DatabaseTests {
 
 			// A Combo is an arrangement of Lists, not an owner of them: its memberships and
 			// its own deck go, and every List, Item and `ListDraw` is left exactly as it was.
-			#expect(
-				try await Snapshot(database) == Snapshot(
+			let snapshot = try await Snapshot(database)
+			expectNoDifference(
+				snapshot,
+				Snapshot(
 					comboDraws: [],
 					comboLists: [],
 					combos: [],
@@ -248,8 +257,10 @@ extension DatabaseTests {
 			// The two decks are independent of each other but not of the Item: a draw row is
 			// keyed on the Item's identity, so removing the Item removes the fact that it was
 			// dealt, on the List's surface and on the Combo's alike. Ramen keeps both of its.
-			#expect(
-				try await Snapshot(database) == Snapshot(
+			let snapshot = try await Snapshot(database)
+			expectNoDifference(
+				snapshot,
+				Snapshot(
 					comboDraws: [UUID(-2)],
 					comboLists: [UUID(-1)],
 					combos: [UUID(-1)],

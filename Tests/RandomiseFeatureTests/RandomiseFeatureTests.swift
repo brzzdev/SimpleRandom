@@ -4,6 +4,7 @@
 //
 
 internal import ComposableArchitecture2
+internal import CustomDump
 internal import Database
 internal import Dependencies
 internal import DependenciesTestSupport
@@ -30,9 +31,9 @@ internal import Testing
 ///
 /// Those last three are claims about *many* draws, and no single `send` can state the pick it
 /// is about to make. They are therefore asserted against ``RandomiseFeature/State/draw()``
-/// directly, which is where selection lives — rather than by turning a `TestStore`'s
+/// directly, which is where selection lives — rather than by turning a `TestStoreActor`'s
 /// exhaustive comparison off, which ADR-0019 rules out and which would have bought a discount
-/// on a cost this app is not paying. Every `TestStore` here stays exhaustive.
+/// on a cost this app is not paying. Every `TestStoreActor` here stays exhaustive.
 ///
 /// Seeded rows carry **negative** ids, as ``DatabaseTests`` and ``ListsFeatureTests`` do:
 /// `inMemory()` registers a counting generator that mints `…0001` upwards, so a negative seed
@@ -44,7 +45,10 @@ internal import Testing
 /// whatever came out is out of the pool, and everything else is still in it.
 ///
 /// The clock is frozen because a draw row is stamped with one. Nothing here reads it back.
-@MainActor
+///
+/// The suite is not `@MainActor` and its stores are ``TestStoreActor``s: no module here sets
+/// `defaultIsolation`, so these features are not main-actor-isolated and the actor-isolated
+/// harness is the one the library points a package of this shape at (#64).
 @Suite(
 	.dependency(\.date, .constant(.seed)),
 	.dependency(\.defaultDatabase, try inMemory()),
@@ -63,9 +67,9 @@ internal struct RandomiseFeatureTests {
 		// This is what keeps the generator honest: a `State` built in a preview, or anywhere
 		// else outside a store's dependency scope, cannot quietly draw from the live one.
 		let state = RandomiseFeature.State(scope: .list(lunch))
-		#expect(state.pool == pool)
+		expectNoDifference(state.pool, pool)
 		#expect(state.result == nil)
-		#expect(state.drawToken == 0)
+		expectNoDifference(state.drawToken, 0)
 	}
 
 	@Test
@@ -82,7 +86,7 @@ internal struct RandomiseFeatureTests {
 		// more: that this lands inside the presenting `send`, and so before the sheet's view
 		// exists, which is what keeps the haptic and the announcement to re-rolls only
 		// (ADR-0017).
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(lunch))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(lunch))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
@@ -91,12 +95,12 @@ internal struct RandomiseFeatureTests {
 
 		// **Again** is disabled here, where every draw is a repeat by definition and the haptic
 		// would be the only thing distinguishing a working button from a broken one (ADR-0017).
-		#expect(store.canDrawAgain == false)
+		#expect(await store.canDrawAgain == false)
 
 		// The button being disabled is the courtesy; this is what the reducer does anyway. The
 		// result cannot move, so the token is the only thing that does — which is the whole
 		// reason it exists.
-		store.send(.againButtonTapped) {
+		await store.send(.againButtonTapped) {
 			$0.drawToken = 2
 		}
 
@@ -118,7 +122,7 @@ internal struct RandomiseFeatureTests {
 		// The other List's Item is older than both of these, so it would sort first — and be
 		// drawable — if the query were not scoped. An Item belongs to exactly one List.
 		let state = RandomiseFeature.State(scope: .list(lunch))
-		#expect(state.pool == pool)
+		expectNoDifference(state.pool, pool)
 	}
 
 	@Test
@@ -129,13 +133,14 @@ internal struct RandomiseFeatureTests {
 		// this state is unreachable through the UI. It is asserted anyway because the alternative
 		// to returning nothing is trapping on an empty pool. Mounted, so the opening draw has
 		// had its chance and declined it.
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(lunch))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(lunch))) {
 			RandomiseFeature()
 		}
-		#expect(store.pool.isEmpty)
-		#expect(store.result == nil)
-		#expect(store.drawToken == 0)
-		#expect(store.canDrawAgain == false)
+		#expect(await store.pool.isEmpty)
+		#expect(await store.result == nil)
+		let drawToken = await store.drawToken
+		expectNoDifference(drawToken, 0)
+		#expect(await store.canDrawAgain == false)
 	}
 
 	@Test
@@ -148,7 +153,7 @@ internal struct RandomiseFeatureTests {
 		// so this counts from the first draw rather than from the opening one.
 		for draw in 1...20 {
 			state.draw()
-			#expect(state.drawToken == draw)
+			expectNoDifference(state.drawToken, draw)
 			#expect(state.result?.item.map(pool.contains) == true)
 		}
 	}
@@ -193,7 +198,7 @@ internal struct RandomiseFeatureTests {
 		// either passes on every run or fails on every run.
 		let pizza = counts["Pizza", default: 0]
 		let ramen = counts["Ramen", default: 0]
-		#expect(pizza + ramen == draws)
+		expectNoDifference(pizza + ramen, draws)
 		#expect(Double(pizza) > Double(ramen) * 1.6)
 		#expect(Double(pizza) < Double(ramen) * 2.5)
 	}
@@ -213,13 +218,13 @@ extension RandomiseFeatureTests {
 
 		// The row's existence *is* the draw, so two rows leave one card: a Deck draws only over
 		// the Items with no `ListDraw` row (ADR-0006).
-		#expect(RandomiseFeature.State(scope: .list(deck)).pool == [tacos])
+		expectNoDifference(RandomiseFeature.State(scope: .list(deck)).pool, [tacos])
 
 		// The very same rows, read by the very same List turned plain. Switching a Deck back to
 		// plain preserves its rows and draws over everything regardless — which is what lets
 		// switching back resume where it left off rather than start again.
 		let plain = Models.List(id: deck.id, createdAt: deck.createdAt, name: deck.name)
-		#expect(RandomiseFeature.State(scope: .list(plain)).pool == pool)
+		expectNoDifference(RandomiseFeature.State(scope: .list(plain)).pool, pool)
 	}
 
 	@Test
@@ -253,8 +258,8 @@ extension RandomiseFeatureTests {
 			state.draw()
 			#expect(state.result?.item.map(pool.contains) == true)
 		}
-		#expect(state.drawToken == 10)
-		#expect(state.pool == pool)
+		expectNoDifference(state.drawToken, 10)
+		expectNoDifference(state.pool, pool)
 	}
 
 	@Test
@@ -267,7 +272,7 @@ extension RandomiseFeatureTests {
 		let tacos = try #require(pool.last)
 
 		// One card live, so the pick is forced and this may be written down.
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
@@ -283,11 +288,12 @@ extension RandomiseFeatureTests {
 		// nothing else has moved here for it to be compared alongside — the same rule
 		// ``ListsFeatureTests`` states in full. Where a later draw *does* move something, the
 		// pool travels in that assertion's closure.
-		#expect(store.pool.isEmpty)
+		#expect(await store.pool.isEmpty)
 
 		// The whole deck has now been dealt exactly once, two of them by the seed and this one
 		// by the feature: the multiset of what came out *is* the pool.
-		#expect(try await Set(draws()) == Set(pool.map(\.id)))
+		let dealtIDs = try await Set(draws())
+		expectNoDifference(dealtIDs, Set(pool.map(\.id)))
 	}
 
 	@Test
@@ -296,20 +302,20 @@ extension RandomiseFeatureTests {
 		let ramen = try #require(pool.last)
 
 		// Resumed one card in, so the opening draw is the last one this Deck has.
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
 			$0.result = .item(ramen)
 		}
 		try await settle(store)
-		#expect(store.pool.isEmpty)
+		#expect(await store.pool.isEmpty)
 
 		// Exhaustion lands on the draw *after* the last card, not on the last card itself: the
 		// result stays up until a re-roll goes looking for one that is not there. The token
 		// moves with it, because that replacement is what the announcement acknowledges.
-		#expect(store.canDrawAgain)
-		store.send(.againButtonTapped) {
+		#expect(await store.canDrawAgain)
+		await store.send(.againButtonTapped) {
 			$0.drawToken = 2
 			$0.result = .exhausted
 			// The draw that emptied it moved nothing else, so this is where that refresh is
@@ -330,17 +336,19 @@ extension RandomiseFeatureTests {
 			// The pool is the whole deck again by the time this draw happens: the delete landed
 			// and the reload waited for it, which is the one thing that makes a spent card live
 			// again.
-			$0.result = store.result
+			$0.result = store.actual(\.result)
 			$0.pool = pool
 		}
 
-		let dealt = try #require(store.result?.item)
+		let dealt = try #require(await store.result?.item)
 		#expect(pool.contains(dealt))
 
 		try await settle(store)
-		#expect(store.pool == pool.filter { $0.id != dealt.id })
+		let remainingPool = await store.pool
+		expectNoDifference(remainingPool, pool.filter { $0.id != dealt.id })
 		// One row, for the card just dealt: Reshuffle put both of the old ones back.
-		#expect(try await draws() == [dealt.id])
+		let dealtIDs = try await draws()
+		expectNoDifference(dealtIDs, [dealt.id])
 	}
 
 	@Test
@@ -354,7 +362,7 @@ extension RandomiseFeatureTests {
 
 		// Seeded spent, so that the one draw a test cannot state — the opening one, which
 		// happens synchronously at mount — is the one draw whose outcome is not a pick.
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
@@ -367,10 +375,10 @@ extension RandomiseFeatureTests {
 			$0.drawToken = 2
 			// The whole deck, put back by the delete this action follows, less nothing: the card
 			// it deals is taken out by the insert that has not run yet.
-			$0.result = store.result
+			$0.result = store.actual(\.result)
 			$0.pool = pool
 		}
-		var dealt = [try #require(store.result?.item)]
+		var dealt = [try #require(await store.result?.item)]
 		try await settle(store)
 
 		// Then right through to the last card. Which card each draw lands on is the generator's
@@ -385,24 +393,26 @@ extension RandomiseFeatureTests {
 		for draw in 2...pool.count {
 			await store.send(.againButtonTapped) {
 				$0.drawToken = draw + 1
-				$0.result = store.result
-				$0.pool = store.pool
+				$0.result = store.actual(\.result)
+				$0.pool = store.actual(\.pool)
 			}?.value
-			let card = try #require(store.result?.item)
+			let card = try #require(await store.result?.item)
 			#expect(!dealt.contains(card))
 			dealt.append(card)
 
 			try await settle(store)
-			#expect(store.pool == pool.filter { !dealt.contains($0) })
+			let remainingPool = await store.pool
+			expectNoDifference(remainingPool, pool.filter { !dealt.contains($0) })
 		}
 
-		#expect(dealt.count == pool.count)
-		#expect(Set(dealt) == Set(pool))
-		#expect(dealt.map(\.title).sorted() == titles.sorted())
-		#expect(try await Set(draws()) == Set(pool.map(\.id)))
+		expectNoDifference(dealt.count, pool.count)
+		expectNoDifference(Set(dealt), Set(pool))
+		expectNoDifference(dealt.map(\.title).sorted(), titles.sorted())
+		let dealtIDs = try await Set(draws())
+		expectNoDifference(dealtIDs, Set(pool.map(\.id)))
 
 		// And exhaustion lands on the draw after the last card — N + 1, never N.
-		store.send(.againButtonTapped) {
+		await store.send(.againButtonTapped) {
 			$0.drawToken = pool.count + 2
 			$0.result = .exhausted
 			$0.pool = []
@@ -414,22 +424,23 @@ extension RandomiseFeatureTests {
 		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza"])
 		let pizza = try #require(pool.first)
 
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
 		try await settle(store)
-		#expect(store.pool.isEmpty)
-		#expect(try await draws() == [pizza.id])
+		#expect(await store.pool.isEmpty)
+		let dealtIDs = try await draws()
+		expectNoDifference(dealtIDs, [pizza.id])
 
 		// **Again** stays live where a plain one-item List disables it. No draw of a Deck's is a
 		// repeat — this one either deals a card or lands on exhaustion — and disabling it here
 		// would make "That's the whole deck" unreachable, since it is only ever reached from
 		// inside this sheet.
-		#expect(store.canDrawAgain)
-		store.send(.againButtonTapped) {
+		#expect(await store.canDrawAgain)
+		await store.send(.againButtonTapped) {
 			$0.drawToken = 2
 			$0.result = .exhausted
 			$0.pool = []
@@ -441,17 +452,17 @@ extension RandomiseFeatureTests {
 		let (deck, pool) = try await seedLunch(.deck, with: ["Pizza"])
 		let pizza = try #require(pool.first)
 
-		let store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+		let store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(deck))) {
 			RandomiseFeature()
 		} changes: {
 			$0.drawToken = 1
 			$0.result = .item(pizza)
 		}
 		try await settle(store)
-		#expect(store.pool.isEmpty)
+		#expect(await store.pool.isEmpty)
 
 		// The sheet is spent, and stays that way until something puts the cards back.
-		store.send(.againButtonTapped) {
+		await store.send(.againButtonTapped) {
 			$0.drawToken = 2
 			$0.result = .exhausted
 			// The opening deal emptied it. Nothing else moved at the time, so this is where that
@@ -466,7 +477,7 @@ extension RandomiseFeatureTests {
 		try await database.write { db in
 			try ListDraw.inList(deck.id).delete().execute(db)
 		}
-		try await store.state.$pool.load()
+		try await store.loadPool()
 
 		// And the sheet simply believes the pool — the card is back on offer, and the draw is
 		// forced onto it. This is what the earlier local guard could not do: it kept filtering
@@ -480,10 +491,11 @@ extension RandomiseFeatureTests {
 			// pinning it to the full deck passes alone and fails under load. The claims worth
 			// making are the forced pick above and the two below, none of which are timing's
 			// business.
-			$0.pool = store.pool
+			$0.pool = store.actual(\.pool)
 		}?.value
-		#expect(store.pool.isEmpty)
-		#expect(try await draws() == [pizza.id])
+		#expect(await store.pool.isEmpty)
+		let dealtIDs = try await draws()
+		expectNoDifference(dealtIDs, [pizza.id])
 	}
 
 	@Test
@@ -497,12 +509,13 @@ extension RandomiseFeatureTests {
 		// The report *is* the expected outcome here, which is what `withKnownIssue` says: the
 		// pick and the sheet are correct, and the database is the thing that failed.
 		// **The construction is inside the region, not just the settle.** The opening deal runs at
-		// mount, and its failure is reported before `TestStore.init` hands the store back — so a
-		// region covering only the wait below sees no issue and fails with "Known issue was not
-		// recorded". That is what forces the store to be declared first and assigned here.
-		var store: TestStore<RandomiseFeature>!
+		// mount, and its failure is reported before the awaited `TestStoreActor.init` hands the
+		// store back — so a region covering only the wait below sees no issue and fails with
+		// "Known issue was not recorded". That is what forces the store to be declared first and
+		// assigned here.
+		var store: TestStoreActor<RandomiseFeature>!
 		await withKnownIssue {
-			store = TestStore(initialState: RandomiseFeature.State(scope: .list(deck))) {
+			store = await TestStoreActor(initialState: RandomiseFeature.State(scope: .list(deck))) {
 				RandomiseFeature()
 			} changes: {
 				$0.drawToken = 1
@@ -514,7 +527,8 @@ extension RandomiseFeatureTests {
 		// Nothing persisted, so nothing was spent: the pool still holds the card and the deck is
 		// exactly as full as its row count says it is.
 		#expect(try await draws().isEmpty)
-		#expect(store.pool == pool)
+		let poolAfterTheFailedDeal = await store.pool
+		expectNoDifference(poolAfterTheFailedDeal, pool)
 
 		// **And the card is still on offer.** This is the half that regressed under the local
 		// guard, which inserted into its own set before the write started and removed nothing on
@@ -529,7 +543,8 @@ extension RandomiseFeatureTests {
 			}?.value
 		}
 		#expect(try await draws().isEmpty)
-		#expect(store.pool == pool)
+		let poolAfterTheFailedReRoll = await store.pool
+		expectNoDifference(poolAfterTheFailedReRoll, pool)
 	}
 }
 
@@ -613,9 +628,39 @@ extension RandomiseFeatureTests {
 	/// writer, which is what makes the wait a fact rather than a sleep; the load is the same
 	/// ``ListDetailTests/reloadItems(_:)`` asks for, because a database observation arrives on
 	/// its own schedule too.
-	private func settle(_ store: TestStore<RandomiseFeature>) async throws {
+	private func settle(_ store: TestStoreActor<RandomiseFeature>) async throws {
 		try await database.write { _ in }
-		try await store.state.$pool.load()
+		try await store.loadPool()
+	}
+}
+
+// MARK: - Reaching an actor-isolated store
+
+extension TestStoreActor {
+	/// The store's live value for a piece of state, read from inside a `changes` closure.
+	///
+	/// Those closures are synchronous, so `await store.result` is unavailable in one — and the
+	/// isolation is not merely assumed: `send` and `receive` are isolated to this store and call
+	/// the closure themselves, so it runs on this store's own executor.
+	///
+	/// Used only where the value is the generator's business rather than this suite's, exactly
+	/// as ``TestStore`` allowed the same read before #64. Every other field still travels
+	/// written down.
+	nonisolated internal func actual<Value: Sendable>(
+		_ keyPath: sending KeyPath<State, Value>
+	) -> Value {
+		assumeIsolated { $0.state[keyPath: keyPath] }
+	}
+}
+
+extension TestStoreActor where Subject == RandomiseFeature {
+	/// Reloads the pool, from off the store's actor.
+	///
+	/// `state` is isolated and `RandomiseFeature.State` is not `Sendable`, so it cannot be
+	/// lifted out to reach the query on it. An isolated method reaches it in place instead and
+	/// hands back nothing.
+	internal func loadPool() async throws {
+		try await state.$pool.load()
 	}
 }
 
