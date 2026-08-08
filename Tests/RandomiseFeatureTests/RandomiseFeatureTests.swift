@@ -635,16 +635,7 @@ extension RandomiseFeatureTests {
 
 // MARK: - Reaching an actor-isolated store
 
-extension TestStoreActor where Subject == RandomiseFeature {
-	/// Reloads the pool, from off the store's actor.
-	///
-	/// `state` is isolated and `RandomiseFeature.State` is not `Sendable`, so it cannot be
-	/// lifted out to reach the query on it. An isolated method reaches it in place instead and
-	/// hands back nothing.
-	internal func loadPool() async throws {
-		try await state.$pool.load()
-	}
-
+extension TestStoreActor {
 	/// The store's live value for a piece of state, read from inside a `changes` closure.
 	///
 	/// Those closures are synchronous, so `await store.result` is unavailable in one — and the
@@ -658,6 +649,17 @@ extension TestStoreActor where Subject == RandomiseFeature {
 		_ keyPath: sending KeyPath<State, Value>
 	) -> Value {
 		assumeIsolated { $0.state[keyPath: keyPath] }
+	}
+}
+
+extension TestStoreActor where Subject == RandomiseFeature {
+	/// Reloads the pool, from off the store's actor.
+	///
+	/// `state` is isolated and `RandomiseFeature.State` is not `Sendable`, so it cannot be
+	/// lifted out to reach the query on it. An isolated method reaches it in place instead and
+	/// hands back nothing.
+	internal func loadPool() async throws {
+		try await state.$pool.load()
 	}
 }
 
