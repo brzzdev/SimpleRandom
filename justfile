@@ -58,3 +58,11 @@ lint:
 # Run the four test targets, via the test plan
 test: ensure-generated
 	xcodebuild -workspace {{ workspace }} -scheme {{ scheme }} -destination '{{ destination }}' {{ skip_macro_validation }} test | xcbeautify
+
+# Run one test target — `just test-one RandomiseFeatureTests`
+#
+# Exists because #58 is a flake, and a flake is measured by running one suite many times and
+# counting: `for i in $(seq 20); do just test-one RandomiseFeatureTests; done`. Without it that
+# means reaching past `just` for xcodebuild, which this repo does not do.
+test-one target: ensure-generated
+	xcodebuild -workspace {{ workspace }} -scheme {{ scheme }} -destination '{{ destination }}' {{ skip_macro_validation }} test -only-testing:{{ target }} | xcbeautify
